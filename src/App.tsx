@@ -127,6 +127,24 @@ function SearchableSelect(props: {
   onCommitNext?: () => void // NEW: called after Tab-select
   triggerRef?: React.RefObject<HTMLButtonElement | null>
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  function openAndPrime(initialText: string) {
+    setOpen(true)
+    setQuery(initialText)
+
+    setTimeout(() => {
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+
+      // Put caret at end so next typing appends (doesn't overwrite)
+      const end = el.value.length
+      el.setSelectionRange(end, end)
+    }, 0)
+  }
+
+
   const { label, placeholder = "Select…", options, value, onChange, disabled, onCommitNext } = props
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -167,9 +185,12 @@ function SearchableSelect(props: {
         onOpenChange={(o) => {
           if (disabled) return
           setOpen(o)
-          if (o) setQuery("") // reset search when opening
+
+          // Optional: clear search when closing (nice tidy behaviour)
+          if (!o) setQuery("")
         }}
       >
+
         <PopoverTrigger asChild>
           <Button
             ref={props.triggerRef}
@@ -177,6 +198,22 @@ function SearchableSelect(props: {
             variant="outline"
             className="w-full justify-between"
             disabled={disabled}
+            onKeyDown={(e) => {
+              if (disabled) return
+              if (open) return
+
+              // Only react to "printable" keys (letters/numbers/etc.)
+              const isPrintable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey
+              const isBackspace = e.key === "Backspace"
+
+              if (isPrintable) {
+                e.preventDefault()
+                openAndPrime(e.key)
+              } else if (isBackspace) {
+                e.preventDefault()
+                openAndPrime("")
+              }
+            }}
           >
             {value ? value.label : placeholder}
             <span className="ml-2 text-muted-foreground">▾</span>
@@ -186,6 +223,7 @@ function SearchableSelect(props: {
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
           <Command>
             <CommandInput
+              ref={inputRef}
               placeholder={`Type to search ${label.toLowerCase()}…`}
               value={query}
               onValueChange={setQuery}

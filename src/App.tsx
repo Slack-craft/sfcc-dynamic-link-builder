@@ -609,15 +609,17 @@ export default function App() {
 
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b">
-        <div className="mx-auto flex max-w-6xl items-center justify-between p-4">
-          <h1 className="text-xl font-semibold">Dynamic Link Builder</h1>
-          <Badge variant="secondary">Internal Tool</Badge>
-        </div>
-      </header>
+<div className="min-h-screen bg-background text-foreground">
+  <header className="border-b">
+    <div className="mx-auto w-3/4 max-w-6xl flex items-center justify-between p-4">
+      <h1 className="text-xl font-semibold">Dynamic Link Builder</h1>
+      <Badge variant="secondary">Internal Tool</Badge>
+    </div>
+  </header>
 
-      <main className="mx-auto grid max-w-6xl gap-6 p-4 lg:grid-cols-3 lg:items-stretch">
+
+      <main className="min-h-[calc(100vh-64px)] p-6">
+          <div className="grid w-full gap-6 lg:grid-cols-3 lg:items-stretch">
         {/* Inputs */}
         <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-120px)]">
           <CardHeader>
@@ -953,6 +955,7 @@ export default function App() {
             )}
           </CardContent>
         </Card>
+                </div>
       </main>
     </div>
   )

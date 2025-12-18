@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { BRAND_OPTIONS } from "@/data/brands"
 
 
 
@@ -25,13 +26,23 @@ type Option = { label: string; value: string }
 
 const CATEGORY_OPTIONS: Option[] = [
   { label: "Catalog", value: "catalogue-onsale" },
-  { label: "Spare Parts", value: "spare-parts" },
+  { label: "4WD & Recovery", value: "SCA0104" },
+  { label: "Accessories & Seat Covers", value: "SCA0102" },
+  { label: "Batteries & Electrical", value: "SCA0106" },
+  { label: "Car Care & Cleaning", value: "SCA0101" },
+  { label: "Caravan, Camping & Trailer", value: "SCA0114" },
+  { label: "Oils, Fluids & Filters", value: "SCA0107" },
+  { label: "Paint & Panel", value: "SCA0110" },
+  { label: "Spare Parts", value: "SCA0108" },
+  { label: "Technology", value: "SCA0103" },
+  { label: "Toolboxes, Shelving & Storage", value: "SCA0115" },
+  { label: "Tools & Garage", value: "SCA0113" },
+  { label: "Toys, Gifting & Apparel", value: "SCA0111" },
+  { label: "Tyres", value: "SCA700303" },
+  { label: "Best Sellers", value: "SCA0199" },
 ]
 
-const BRAND_OPTIONS: Option[] = [
-  { label: "Bendix", value: "SCA0108" },
-  { label: "Tridon", value: "SCA0123" },
-]
+
 
 // -----------------------------
 // History types

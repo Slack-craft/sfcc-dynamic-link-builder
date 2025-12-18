@@ -114,7 +114,7 @@ function SearchableSelect(props: {
   onChange: (opt: Option | null) => void
   disabled?: boolean
   onCommitNext?: () => void // NEW: called after Tab-select
-  triggerRef?: React.RefObject<HTMLButtonElement>
+  triggerRef?: React.RefObject<HTMLButtonElement | null>
 }) {
   const { label, placeholder = "Select…", options, value, onChange, disabled, onCommitNext } = props
   const [open, setOpen] = useState(false)

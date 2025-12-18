@@ -621,7 +621,7 @@ export default function App() {
       <main className="min-h-[calc(100vh)] p-6">
           <div className="grid w-full gap-6 lg:grid-cols-3 lg:items-stretch">
         {/* Inputs */}
-        <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-120px)]">
+        <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]">
           <CardHeader>
             <CardTitle>Inputs</CardTitle>
           </CardHeader>
@@ -774,7 +774,7 @@ export default function App() {
         </Card>
 
         {/* Output */}
-        <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-120px)]">
+        <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]">
           <CardHeader>
             <CardTitle>Output</CardTitle>
           </CardHeader>
@@ -867,7 +867,7 @@ export default function App() {
         </Card>
 
         {/* History */}
-        <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-120px)]">
+        <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <CardTitle>History</CardTitle>

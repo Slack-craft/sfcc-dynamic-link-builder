@@ -618,7 +618,7 @@ export default function App() {
   </header>
 
 
-      <main className="min-h-[calc(100vh-64px)] p-6">
+      <main className="min-h-[calc(100vh)] p-6">
           <div className="grid w-full gap-6 lg:grid-cols-3 lg:items-stretch">
         {/* Inputs */}
         <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-120px)]">

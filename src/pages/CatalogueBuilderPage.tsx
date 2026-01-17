@@ -26,7 +26,6 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
 import DynamicLinkBuilder from "@/tools/link-builder/DynamicLinkBuilder"
-import { createWorker } from "tesseract.js"
 import {
   createProject,
   loadProjectsState,
@@ -48,11 +47,7 @@ import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 
 const MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
 const PDF_DETECTION_STORAGE_KEY = "sca_pdf_tile_project_v1"
-const PLU_REGEX = /\b(?:\d\s*){5,8}\b/g
 const MAX_PLUS_FIELDS = 20
-const OCR_CONFIDENCE_MIN = 60
-const OCR_SCALE = 3
-const OCR_SMOOTHING = true
 
 function sanitizeTileId(value: string) {
   const trimmed = value.trim()
@@ -67,67 +62,6 @@ function stripExtension(filename: string) {
   return filename.replace(/\.[^/.]+$/, "")
 }
 
-function normalizeOcrText(text: string) {
-  return text.replace(/[0-9OIlS ]+/g, (match) => {
-    if (!/\d/.test(match)) return match
-    const normalized = match
-      .replace(/[Oo]/g, "0")
-      .replace(/[Il]/g, "1")
-      .replace(/S/g, "5")
-    return normalized.replace(/\s+/g, "")
-  })
-}
-
-function extractPluCandidates(
-  text: string,
-  words?: { text: string; confidence: number }[]
-) {
-  const reject = new Set(["2025", "2026", "2027"])
-  const seen = new Set<string>()
-  const strong: string[] = []
-  const weak: string[] = []
-
-  function pushCandidate(value: string, confidence: number) {
-    const trimmed = value.replace(/\s+/g, "").trim()
-    if (!trimmed || reject.has(trimmed) || seen.has(trimmed)) return
-    seen.add(trimmed)
-    if (confidence >= OCR_CONFIDENCE_MIN) {
-      strong.push(trimmed)
-    } else {
-      weak.push(trimmed)
-    }
-  }
-
-  const sourceTokens =
-    words && words.length > 0
-      ? words.map((word) => ({
-          text: normalizeOcrText(word.text ?? ""),
-          confidence: Number.isFinite(word.confidence) ? word.confidence : 0,
-        }))
-      : [{ text: normalizeOcrText(text), confidence: 0 }]
-
-  for (const token of sourceTokens) {
-    const matches = token.text.match(PLU_REGEX) ?? []
-    for (const match of matches) {
-      pushCandidate(match, token.confidence)
-    }
-  }
-
-  const strongSix = strong.filter((candidate) => candidate.length === 6)
-  const strongFallback = strongSix.length > 0 ? strongSix : strong
-  const finalStrong = strongFallback.filter(
-    (candidate) => candidate.length >= 5 && candidate.length <= 8
-  )
-  const finalWeak = weak.filter(
-    (candidate) => candidate.length >= 5 && candidate.length <= 8
-  )
-
-  return {
-    candidates: finalStrong,
-    weakSuggestions: finalStrong.length === 0 ? finalWeak : [],
-  }
-}
-
 function createEmptyLinkBuilderState(): LinkBuilderState {
   return {
     category: null,
@@ -137,117 +71,8 @@ function createEmptyLinkBuilderState(): LinkBuilderState {
   }
 }
 
-function createEmptyExtractedFlags() {
-  return Array.from({ length: MAX_PLUS_FIELDS }, () => false)
-}
-
-async function upscaleForOcr(source: Blob, scale = OCR_SCALE) {
-  const bmp = await createImageBitmap(source)
-  const srcW = bmp.width
-  const srcH = bmp.height
-  if (!srcW || !srcH) {
-    bmp.close?.()
-    throw new Error("Invalid OCR source dimensions")
-  }
-  const canvas = document.createElement("canvas")
-  canvas.width = Math.max(1, Math.floor(srcW * scale))
-  canvas.height = Math.max(1, Math.floor(srcH * scale))
-  const ctx = canvas.getContext("2d")
-  if (!ctx) {
-    bmp.close?.()
-    return source
-  }
-  ctx.imageSmoothingEnabled = OCR_SMOOTHING
-  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height)
-  bmp.close?.()
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-    const data = imageData.data
-    const hist = new Array(256).fill(0)
-    let minLum = 255
-    let maxLum = 0
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i]
-      const g = data[i + 1]
-      const b = data[i + 2]
-      const lum = Math.round(0.299 * r + 0.587 * g + 0.114 * b)
-      hist[lum] += 1
-      if (lum < minLum) minLum = lum
-      if (lum > maxLum) maxLum = lum
-      data[i] = lum
-      data[i + 1] = lum
-      data[i + 2] = lum
-    }
-    const totalPixels = data.length / 4
-    const lowCut = Math.floor(totalPixels * 0.05)
-    const highCut = Math.floor(totalPixels * 0.95)
-    let cumulative = 0
-    let low = minLum
-    let high = maxLum
-    for (let i = 0; i < hist.length; i += 1) {
-      cumulative += hist[i]
-      if (cumulative >= lowCut) {
-        low = i
-        break
-      }
-    }
-    cumulative = 0
-    for (let i = hist.length - 1; i >= 0; i -= 1) {
-      cumulative += hist[i]
-      if (cumulative >= totalPixels - highCut) {
-        high = i
-        break
-      }
-    }
-    if (low >= high) {
-      low = minLum
-      high = maxLum
-    }
-    const range = high - low || 1
-    for (let i = 0; i < data.length; i += 4) {
-      const lum = data[i]
-      const stretched = Math.max(0, Math.min(255, Math.round(((lum - low) / range) * 255)))
-      const blended = Math.round(stretched * 0.7 + lum * 0.3)
-      data[i] = blended
-      data[i + 1] = blended
-      data[i + 2] = blended
-    }
-  ctx.putImageData(imageData, 0, 0)
-  return new Promise<Blob>((resolve) => {
-    canvas.toBlob((blob) => resolve(blob ?? source), "image/png")
-  })
-}
-
-async function getBitmapSize(blob: Blob) {
-  const bmp = await createImageBitmap(blob)
-  const size = { width: bmp.width, height: bmp.height }
-  bmp.close?.()
-  return size
-}
-
-async function recognizeWithFallback(
-  worker: Awaited<ReturnType<typeof createWorker>>,
-  blob: Blob
-) {
-  try {
-    return await worker.recognize(blob)
-  } catch {
-    const url = URL.createObjectURL(blob)
-    try {
-      return await worker.recognize(url)
-    } finally {
-      URL.revokeObjectURL(url)
-    }
-  }
-}
-
 async function deleteImagesForProject(projectId: string) {
   await clearImagesForProject(projectId)
-}
-
-function buildPlusFromCandidates(candidates: string[]) {
-  const plus = Array.from({ length: MAX_PLUS_FIELDS }, (_, i) => candidates[i] ?? "")
-  const extractedFlags = Array.from({ length: MAX_PLUS_FIELDS }, (_, i) => i < candidates.length)
-  return { plus, extractedFlags }
 }
 
 function readPdfDetectionFromStorage(): Record<string, unknown> {
@@ -281,17 +106,9 @@ export default function CatalogueBuilderPage() {
     createEmptyLinkBuilderState()
   )
   const [draftLinkOutput, setDraftLinkOutput] = useState("")
-  const [draftExtractedFlags, setDraftExtractedFlags] = useState<boolean[]>(() =>
-    createEmptyExtractedFlags()
-  )
   const [tileThumbUrls, setTileThumbUrls] = useState<Record<string, string>>({})
   const tileThumbUrlsRef = useRef<Record<string, string>>({})
   const [selectedColorUrl, setSelectedColorUrl] = useState<string | null>(null)
-  const [selectedGrayUrl, setSelectedGrayUrl] = useState<string | null>(null)
-  const [ocrRunning, setOcrRunning] = useState(false)
-  const [ocrStatus, setOcrStatus] = useState("")
-  const [ocrAllRunning, setOcrAllRunning] = useState(false)
-  const [ocrAllStatus, setOcrAllStatus] = useState("")
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
@@ -443,36 +260,6 @@ export default function CatalogueBuilderPage() {
     })
   }
 
-  async function getOcrImageBlobForTile(
-    tile: Tile
-  ): Promise<{ blob: Blob; used: "gray" | "color" } | null> {
-    if (tile.grayImageKey) {
-      const grayBlob = await getImage(tile.grayImageKey)
-      if (grayBlob) {
-        return { blob: grayBlob, used: "gray" }
-      }
-    }
-    if (tile.imageKey) {
-      const colorBlob = await getImage(tile.imageKey)
-      if (colorBlob) {
-        return { blob: colorBlob, used: "color" }
-      }
-    }
-    return null
-  }
-
-  async function configureOcrWorker(worker: Awaited<ReturnType<typeof createWorker>>) {
-    try {
-      await worker.setParameters({
-        tessedit_char_whitelist: "0123456789",
-        classify_bln_numeric_mode: "1",
-        tessedit_pageseg_mode: "6",
-      })
-    } catch {
-      // Ignore parameter errors to keep OCR running.
-    }
-  }
-
   function handleCreateProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const trimmedName = newProjectName.trim()
@@ -564,7 +351,6 @@ export default function CatalogueBuilderPage() {
       setDraftNotes("")
       setDraftLinkState(createEmptyLinkBuilderState())
       setDraftLinkOutput("")
-      setDraftExtractedFlags(createEmptyExtractedFlags())
       return
     }
     setDraftTitle(selectedTile.title ?? "")
@@ -572,16 +358,13 @@ export default function CatalogueBuilderPage() {
     setDraftNotes(selectedTile.notes ?? "")
     setDraftLinkState(selectedTile.linkBuilderState ?? createEmptyLinkBuilderState())
     setDraftLinkOutput(selectedTile.dynamicLink ?? "")
-    setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
   }, [selectedTile])
 
   useEffect(() => {
     let cancelled = false
     let colorUrl: string | null = null
-    let grayUrl: string | null = null
 
     setSelectedColorUrl(null)
-    setSelectedGrayUrl(null)
 
     async function loadSelectedImages() {
       if (!selectedTile) return
@@ -592,13 +375,6 @@ export default function CatalogueBuilderPage() {
           setSelectedColorUrl(colorUrl)
         }
       }
-      if (selectedTile.grayImageKey) {
-        const grayBlob = await getImage(selectedTile.grayImageKey)
-        if (grayBlob && !cancelled) {
-          grayUrl = URL.createObjectURL(grayBlob)
-          setSelectedGrayUrl(grayUrl)
-        }
-      }
     }
 
     void loadSelectedImages()
@@ -606,12 +382,10 @@ export default function CatalogueBuilderPage() {
     return () => {
       cancelled = true
       if (colorUrl) URL.revokeObjectURL(colorUrl)
-      if (grayUrl) URL.revokeObjectURL(grayUrl)
     }
   }, [
     selectedTile?.id,
     selectedTile?.imageKey,
-    selectedTile?.grayImageKey,
   ])
 
   function buildUploadSignature(files: File[]) {
@@ -674,11 +448,8 @@ export default function CatalogueBuilderPage() {
           status: "todo",
           notes: undefined,
           dynamicLink: undefined,
-          extractedPLUs: undefined,
-          extractedPluFlags: undefined,
           linkBuilderState: createEmptyLinkBuilderState(),
           imageKey: colorKey,
-          grayImageKey: undefined,
           originalFileName: file.name,
         })
       }
@@ -774,178 +545,8 @@ export default function CatalogueBuilderPage() {
       notes: draftNotes.trim() || undefined,
       dynamicLink: draftLinkOutput.trim() || undefined,
       linkBuilderState: draftLinkState,
-      extractedPluFlags: draftExtractedFlags,
     })
     upsertProject(updated)
-  }
-
-  async function runOcr() {
-    if (!project || !selectedTile || ocrRunning) return
-    const source = await getOcrImageBlobForTile(selectedTile)
-    if (!source) return
-    setOcrRunning(true)
-    setOcrStatus("Preparing OCR...")
-    let worker: Awaited<ReturnType<typeof createWorker>> | null = null
-    try {
-      worker = await createWorker("eng")
-      await configureOcrWorker(worker)
-      const processedBlob = await upscaleForOcr(source.blob)
-      const size = await getBitmapSize(processedBlob)
-      console.log(
-        `[OCR] tile=${selectedTile.id} source=${source.used} size=${size.width}x${size.height}`
-      )
-      if (size.width < 50 || size.height < 50) {
-        toast.warning(
-          `Skipped OCR for tile ${selectedTile.id}: OCR image too small (${size.width}x${size.height}).`
-        )
-        return
-      }
-      setOcrStatus(`Recognising (${source.used === "gray" ? "greyscale" : "colour"})...`)
-      const { data } = await recognizeWithFallback(worker, processedBlob)
-
-      setOcrStatus("Parsing results...")
-      const text = data.text ?? ""
-      const { candidates, weakSuggestions } = extractPluCandidates(text, data.words)
-
-      if (candidates.length > 0) {
-        const { plus, extractedFlags } = buildPlusFromCandidates(candidates)
-        const baseState = selectedTile.linkBuilderState ?? createEmptyLinkBuilderState()
-        const updated = updateTile(project, selectedTile.id, {
-          extractedPLUs: candidates,
-          extractedPluFlags: extractedFlags,
-          ocrSuggestions: undefined,
-          linkBuilderState: {
-            ...baseState,
-            plus,
-          },
-        })
-        upsertProject(updated)
-      } else if (weakSuggestions.length > 0) {
-        const updated = updateTile(project, selectedTile.id, {
-          ocrSuggestions: weakSuggestions,
-        })
-        upsertProject(updated)
-        toast.message("OCR uncertain. Suggestions saved.")
-      } else {
-        toast.message("No PLU candidates found.")
-      }
-      setOcrStatus("Done")
-    } catch (error) {
-      toast.error("OCR failed. Check local OCR assets and try again.")
-    } finally {
-      if (worker) {
-        await worker.terminate().catch(() => undefined)
-      }
-      setOcrRunning(false)
-      setOcrStatus("")
-    }
-  }
- 
-  async function runOcrForAllTiles() {
-    if (!project || ocrAllRunning) return
-    const tilesWithImages = project.tiles.filter(
-      (tile) => tile.grayImageKey || tile.imageKey
-    )
-    if (tilesWithImages.length === 0) return
-
-    setOcrAllRunning(true)
-    setOcrAllStatus("Preparing OCR...")
-
-    let totalPluCount = 0
-    let updatedTilesCount = 0
-    let skippedTilesCount = 0
-    let uncertainTilesCount = 0
-    let failedTilesCount = 0
-    let worker: Awaited<ReturnType<typeof createWorker>> | null = null
-
-    try {
-      worker = await createWorker("eng")
-      await configureOcrWorker(worker)
-      const updatedTiles = [...project.tiles]
-
-      for (let i = 0; i < updatedTiles.length; i += 1) {
-        const tile = updatedTiles[i]
-        try {
-          const source = await getOcrImageBlobForTile(tile)
-          if (!source) {
-            skippedTilesCount += 1
-            continue
-          }
-
-          const processedBlob = await upscaleForOcr(source.blob)
-          const size = await getBitmapSize(processedBlob)
-          console.log(
-            `[OCR] tile=${tile.id} source=${source.used} size=${size.width}x${size.height}`
-          )
-          if (size.width < 50 || size.height < 50) {
-            toast.warning(
-              `Skipped OCR for tile ${tile.id}: OCR image too small (${size.width}x${size.height}).`
-            )
-            skippedTilesCount += 1
-            continue
-          }
-
-          setOcrAllStatus(
-            `Recognising ${tile.id} (${i + 1}/${updatedTiles.length}) (${source.used === "gray" ? "greyscale" : "colour"})...`
-          )
-
-          const { data } = await recognizeWithFallback(worker, processedBlob)
-          const { candidates, weakSuggestions } = extractPluCandidates(
-            data.text ?? "",
-            data.words
-          )
-          if (candidates.length > 0) {
-            const { plus, extractedFlags } = buildPlusFromCandidates(candidates)
-            const baseState = tile.linkBuilderState ?? createEmptyLinkBuilderState()
-            updatedTiles[i] = {
-              ...tile,
-              extractedPLUs: candidates,
-              extractedPluFlags: extractedFlags,
-              ocrSuggestions: undefined,
-              linkBuilderState: {
-                ...baseState,
-                plus,
-              },
-            }
-            totalPluCount += candidates.length
-            updatedTilesCount += 1
-          } else if (weakSuggestions.length > 0) {
-            updatedTiles[i] = {
-              ...tile,
-              ocrSuggestions: weakSuggestions,
-            }
-            uncertainTilesCount += 1
-          }
-        } catch (error) {
-          failedTilesCount += 1
-        }
-      }
-
-      const updatedProject: CatalogueProject = {
-        ...project,
-        tiles: updatedTiles,
-        updatedAt: new Date().toISOString(),
-      }
-      upsertProject(updatedProject)
-      toast.success(
-        `OCR complete: ${totalPluCount} PLUs across ${updatedTilesCount} tiles. Skipped ${skippedTilesCount}.`
-      )
-      if (uncertainTilesCount > 0) {
-        toast.message(`OCR uncertain on ${uncertainTilesCount} tile(s). Suggestions saved.`)
-      }
-      if (failedTilesCount > 0) {
-        toast.message(`OCR failed on ${failedTilesCount} tile(s).`)
-      }
-      setOcrAllStatus("Done")
-    } catch (error) {
-      toast.error("OCR failed. Check local OCR assets and try again.")
-    } finally {
-      if (worker) {
-        await worker.terminate().catch(() => undefined)
-      }
-      setOcrAllRunning(false)
-      setOcrAllStatus("")
-    }
   }
 
   function selectTileByOffset(offset: number) {
@@ -1007,7 +608,6 @@ export default function CatalogueBuilderPage() {
     draftNotes,
     draftLinkOutput,
     draftLinkState,
-    draftExtractedFlags,
     tiles,
   ])
 
@@ -1158,12 +758,6 @@ export default function CatalogueBuilderPage() {
             </div>
             {project.tiles.length > 0 ? (
               <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" onClick={runOcrForAllTiles} disabled={ocrAllRunning}>
-                  Extract PLUs (All Tiles)
-                </Button>
-                {ocrAllRunning ? (
-                  <span className="text-xs text-muted-foreground">{ocrAllStatus || "Processing..."}</span>
-                ) : null}
                 <Button type="button" variant="outline" onClick={confirmReplaceAll}>
                   Replace All Images
                 </Button>
@@ -1250,43 +844,17 @@ export default function CatalogueBuilderPage() {
                       <CardTitle>{selectedTile.id}</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      {selectedColorUrl || selectedGrayUrl ? (
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <div className="text-xs font-medium uppercase text-muted-foreground">
-                              Colour
-                            </div>
-                            {selectedColorUrl ? (
-                              <div className="w-full overflow-hidden rounded-md border border-border bg-muted/50 p-3">
-                                <img
-                                  src={selectedColorUrl}
-                                  alt={selectedTile.originalFileName}
-                                  className="max-h-[360px] w-full h-auto rounded-md object-contain"
-                                />
-                              </div>
-                            ) : (
-                              <p className="text-sm text-muted-foreground">
-                                No colour preview available.
-                              </p>
-                            )}
+                      {selectedColorUrl ? (
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium uppercase text-muted-foreground">
+                            Image
                           </div>
-                          <div className="space-y-2">
-                            <div className="text-xs font-medium uppercase text-muted-foreground">
-                              Greyscale
-                            </div>
-                            {selectedGrayUrl ? (
-                              <div className="w-full overflow-hidden rounded-md border border-border bg-muted/50 p-3">
-                                <img
-                                  src={selectedGrayUrl}
-                                  alt={`${selectedTile.originalFileName} greyscale`}
-                                  className="max-h-[360px] w-full h-auto rounded-md object-contain"
-                                />
-                              </div>
-                            ) : (
-                              <p className="text-sm text-muted-foreground">
-                                No greyscale preview yet.
-                              </p>
-                            )}
+                          <div className="w-full overflow-hidden rounded-md border border-border bg-muted/50 p-3">
+                            <img
+                              src={selectedColorUrl}
+                              alt={selectedTile.originalFileName}
+                              className="max-h-[360px] w-full h-auto rounded-md object-contain"
+                            />
                           </div>
                         </div>
                       ) : (
@@ -1324,8 +892,6 @@ export default function CatalogueBuilderPage() {
                           initialState={draftLinkState}
                           onChange={setDraftLinkState}
                           onOutputChange={setDraftLinkOutput}
-                          extractedPluFlags={draftExtractedFlags}
-                          onExtractedPluFlagsChange={setDraftExtractedFlags}
                         />
                       </div>
                     <div className="space-y-2">
@@ -1337,25 +903,6 @@ export default function CatalogueBuilderPage() {
                         placeholder="Notes for this tile"
                       />
                     </div>
-                    {selectedTile.imageKey || selectedTile.grayImageKey ? (
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button type="button" variant="outline" onClick={runOcr} disabled={ocrRunning}>
-                            Extract PLUs
-                          </Button>
-                          {ocrRunning ? (
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
-                              <span>{ocrStatus || "Processing..."}</span>
-                            </div>
-                          ) : selectedTile.extractedPLUs?.length ? (
-                            <span className="text-xs text-muted-foreground">
-                              {selectedTile.extractedPLUs.length} PLU(s) extracted
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
                     <div className="flex flex-wrap items-center gap-2">
                       <Button type="button" onClick={saveSelectedTile}>
                         Save (Ctrl+S)

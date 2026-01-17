@@ -66,6 +66,7 @@ export default function PdfTileDetectionPage() {
   const pdfRef = useRef<PDFDocumentProxy | null>(null)
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const renderHostRef = useRef<HTMLDivElement | null>(null)
   const viewportRef = useRef<PageViewport | null>(null)
   const pageSizeRef = useRef<{ width: number; height: number } | null>(null)
   const listItemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
@@ -263,18 +264,26 @@ export default function PdfTileDetectionPage() {
     }
     const page = await pdf.getPage(targetPage ?? pageNumber)
     const baseViewport = page.getViewport({ scale: 1 })
-    const container = canvas.parentElement as HTMLElement | null
+    const MAX_RENDER_H = 850
     const maxWidth = 1100
-    const containerWidth = container?.clientWidth ?? baseViewport.width
-    const targetWidth = Math.min(containerWidth, maxWidth, baseViewport.width)
-    const scale = targetWidth / baseViewport.width
+    const host = renderHostRef.current
+    const availableWidth = host?.clientWidth ?? baseViewport.width
+    const availableHeight = Math.min(MAX_RENDER_H, baseViewport.height)
+    const targetWidth = Math.min(availableWidth, maxWidth, baseViewport.width)
+    const scaleW = targetWidth / baseViewport.width
+    const scaleH = availableHeight / baseViewport.height
+    const scale = Math.max(0.25, Math.min(2, scaleW, scaleH))
     const viewport = page.getViewport({ scale })
-    canvas.width = Math.floor(viewport.width)
-    canvas.height = Math.floor(viewport.height)
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = Math.floor(viewport.width * dpr)
+    canvas.height = Math.floor(viewport.height * dpr)
+    canvas.style.width = `${Math.floor(viewport.width)}px`
+    canvas.style.height = `${Math.floor(viewport.height)}px`
     const ctx = canvas.getContext("2d")
     if (!ctx) {
       throw new Error("Canvas 2D context not available")
     }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     await page.render({ canvasContext: ctx, viewport, canvas }).promise
     viewportRef.current = viewport
     if (Array.isArray(page.view)) {
@@ -287,18 +296,20 @@ export default function PdfTileDetectionPage() {
       overlay.height = canvas.height
       const ctx = overlay.getContext("2d")
       if (ctx) {
-        ctx.clearRect(0, 0, overlay.width, overlay.height)
+        overlay.style.width = canvas.style.width
+        overlay.style.height = canvas.style.height
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        ctx.clearRect(0, 0, viewport.width, viewport.height)
       }
     }
     setPageRendered(true)
   }
 
   function getPaddedRect(box: PdfBox, padding: number) {
-    const canvas = pdfCanvasRef.current
     const viewport = viewportRef.current
-    if (!canvas || !viewport) return { x: 0, y: 0, width: 0, height: 0 }
-    const maxW = canvas?.width ?? 0
-    const maxH = canvas?.height ?? 0
+    if (!viewport) return { x: 0, y: 0, width: 0, height: 0 }
+    const maxW = viewport.width
+    const maxH = viewport.height
     const canvasRect = pdfRectToCanvasRect(box, viewport)
     const x = Math.max(0, canvasRect.x - padding)
     const y = Math.max(0, canvasRect.y - padding)
@@ -342,7 +353,7 @@ export default function PdfTileDetectionPage() {
     if (!ctx) return
     const viewport = viewportRef.current
     if (!viewport) return
-    ctx.clearRect(0, 0, overlay.width, overlay.height)
+    ctx.clearRect(0, 0, viewport.width, viewport.height)
     ctx.strokeStyle = "#ef4444"
     ctx.lineWidth = 2
     ctx.font = "12px sans-serif"
@@ -508,11 +519,9 @@ export default function PdfTileDetectionPage() {
     const overlay = overlayCanvasRef.current
     if (!overlay) return null
     const rect = overlay.getBoundingClientRect()
-    const scaleX = overlay.width / rect.width
-    const scaleY = overlay.height / rect.height
     return {
-      x: (event.clientX - rect.left) * scaleX,
-      y: (event.clientY - rect.top) * scaleY,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
     }
   }
 
@@ -565,11 +574,10 @@ export default function PdfTileDetectionPage() {
     const resizing = resizeStateRef.current
     if (resizing) {
       const minSize = 40
-      const canvas = pdfCanvasRef.current
       const viewport = viewportRef.current
-      if (!viewport || !canvas) return
-      const maxW = canvas?.width ?? 0
-      const maxH = canvas?.height ?? 0
+      if (!viewport) return
+      const maxW = viewport.width
+      const maxH = viewport.height
       const dx = point.x - resizing.startX
       const dy = point.y - resizing.startY
       let { x, y, width, height } = resizing.rect
@@ -650,8 +658,15 @@ export default function PdfTileDetectionPage() {
         minAreaPercent,
         dilateIterations,
       })
+      const dpr = window.devicePixelRatio || 1
       const converted = detected.map((rect) => {
-        const pdfRect = canvasRectToPdfRect(rect, viewport)
+        const cssRect = {
+          x: rect.x / dpr,
+          y: rect.y / dpr,
+          width: rect.width / dpr,
+          height: rect.height / dpr,
+        }
+        const pdfRect = canvasRectToPdfRect(cssRect, viewport)
         return {
           pageNumber,
           ...pdfRect,
@@ -984,6 +999,17 @@ export default function PdfTileDetectionPage() {
     void runAutoDetectIfNeeded(selectedPdfEntry)
   }, [pageRendered, selectedPdfId, pageNumber, selectedPdfEntry?.pages])
 
+  useEffect(() => {
+    const host = renderHostRef.current
+    if (!host) return
+    const observer = new ResizeObserver(() => {
+      if (!pdfRef.current || !pageRendered) return
+      void renderPage(pageNumber)
+    })
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [pageNumber, pageRendered])
+
   const isPageOrdered = useMemo(() => {
     if (orderingFinished) return true
     const includedIndexes = boxes
@@ -1249,14 +1275,11 @@ export default function PdfTileDetectionPage() {
             </div>
             <div className="space-y-3 min-w-0 max-w-[100vh] mx-auto w-full">
               <div className="relative w-full min-w-0 rounded-md border border-border bg-muted/20 p-2">
-                <div className="relative w-full min-w-0">
-                  <canvas
-                    ref={pdfCanvasRef}
-                    className="block h-auto w-full max-w-full"
-                  />
+                <div ref={renderHostRef} className="relative w-full min-w-0">
+                  <canvas ref={pdfCanvasRef} className="block" />
                   <canvas
                     ref={overlayCanvasRef}
-                    className="absolute left-0 top-0 h-full w-full"
+                    className="absolute left-0 top-0"
                     style={{ cursor: overlayCursor }}
                     onClick={handleOverlayClick}
                     onContextMenu={handleOverlayContextMenu}

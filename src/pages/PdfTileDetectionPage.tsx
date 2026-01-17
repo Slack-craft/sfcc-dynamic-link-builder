@@ -16,7 +16,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).toString()
 
 export default function PdfTileDetectionPage() {
-  const [pdfName, setPdfName] = useState("")
   const [pageNumber, setPageNumber] = useState(1)
   const [pageCount, setPageCount] = useState(1)
   const [pdfStatus, setPdfStatus] = useState("")
@@ -31,6 +30,7 @@ export default function PdfTileDetectionPage() {
   >({})
   const [orderingMode, setOrderingMode] = useState(false)
   const [currentOrderCounter, setCurrentOrderCounter] = useState(1)
+  const [overlayCursor, setOverlayCursor] = useState("default")
   const [detecting, setDetecting] = useState(false)
   const [opencvStatus, setOpenCvStatus] = useState<"idle" | "loading" | "ready" | "failed">("idle")
   const [opencvError, setOpenCvError] = useState<string | null>(null)
@@ -38,11 +38,54 @@ export default function PdfTileDetectionPage() {
   const [rendering, setRendering] = useState(false)
   const [hoverRectIndex, setHoverRectIndex] = useState<number | null>(null)
   const [selectedRectIndex, setSelectedRectIndex] = useState<number | null>(null)
+  const [orderingFinished, setOrderingFinished] = useState(false)
 
   const pdfRef = useRef<PDFDocumentProxy | null>(null)
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const listItemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const pdfDocMapRef = useRef<Map<string, PDFDocumentProxy>>(new Map())
+  const isSyncingRef = useRef(false)
+  const resizeStateRef = useRef<{
+    index: number
+    handle: string
+    startX: number
+    startY: number
+    rect: DetectedBox
+  } | null>(null)
+  const wasResizingRef = useRef(false)
+
+  type RectConfig = { include: boolean; paddingOverride?: number; orderIndex?: number }
+  type PageData = {
+    boxes: DetectedBox[]
+    rectConfigs: Record<number, RectConfig>
+    orderingFinished?: boolean
+    currentOrderCounter?: number
+    rectPaddingPx?: number
+  }
+  type PdfEntry = {
+    id: string
+    name: string
+    pageCount: number
+    selectedPage: number
+    pages: Record<number, PageData>
+  }
+
+  const STORAGE_KEY = "pdf_tile_detection_state_v1"
+  const [pdfs, setPdfs] = useState<PdfEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return []
+      return parsed as PdfEntry[]
+    } catch {
+      return []
+    }
+  })
+  const [selectedPdfId, setSelectedPdfId] = useState<string | null>(
+    () => pdfs[0]?.id ?? null
+  )
 
   const areaList = useMemo(
     () =>
@@ -121,25 +164,47 @@ export default function PdfTileDetectionPage() {
   }, [pageRendered, boxes.length])
 
   async function handlePdfChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    console.log("PDF selected", file.name, file.size)
-    try {
-      const buffer = await file.arrayBuffer()
-      const doc = await pdfjsLib.getDocument({ data: buffer }).promise
-      pdfRef.current = doc
-      setPdfName(file.name)
-      setPageCount(doc.numPages)
-      setPageNumber(1)
-      setBoxes([])
-      setPageRendered(false)
-      setPdfStatus(`PDF loaded: ${doc.numPages} pages`)
-    } catch {
-      setPdfStatus("PDF failed to load")
-      toast.error("Failed to load PDF.")
-    } finally {
-      event.target.value = ""
+    const files = Array.from(event.target.files ?? [])
+    if (files.length === 0) return
+    const newEntries: PdfEntry[] = []
+    for (const file of files) {
+      console.log("PDF selected", file.name, file.size)
+      try {
+        const buffer = await file.arrayBuffer()
+        const doc = await pdfjsLib.getDocument({ data: buffer }).promise
+        const id = crypto.randomUUID()
+        pdfDocMapRef.current.set(id, doc)
+        newEntries.push({
+          id,
+          name: file.name,
+          pageCount: doc.numPages,
+          selectedPage: 1,
+          pages: {},
+        })
+      } catch {
+        toast.error(`Failed to load PDF: ${file.name}`)
+      }
     }
+
+    if (newEntries.length > 0) {
+      setPdfs((prev) => [...prev, ...newEntries])
+      if (!selectedPdfId) {
+        const first = newEntries[0]
+        setSelectedPdfId(first.id)
+        pdfRef.current = pdfDocMapRef.current.get(first.id) ?? null
+        setPageCount(first.pageCount)
+        setPageNumber(1)
+        setBoxes([])
+        setRectConfigs({})
+        setRectPaddingPx(10)
+        setCurrentOrderCounter(1)
+        setOrderingMode(false)
+        setOrderingFinished(false)
+      }
+      setPdfStatus(`PDFs loaded: ${newEntries.length}`)
+    }
+
+    event.target.value = ""
   }
 
   async function renderPage() {
@@ -180,6 +245,34 @@ export default function PdfTileDetectionPage() {
     return { x, y, width, height }
   }
 
+  function drawHandle(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
+    ctx.fillStyle = "#ffffff"
+    ctx.strokeStyle = "#111827"
+    ctx.lineWidth = 1
+    ctx.fillRect(x - size / 2, y - size / 2, size, size)
+    ctx.strokeRect(x - size / 2, y - size / 2, size, size)
+  }
+
+  function getHandleRects(box: DetectedBox) {
+    const size = 8
+    const x1 = box.x
+    const y1 = box.y
+    const x2 = box.x + box.width
+    const y2 = box.y + box.height
+    const cx = box.x + box.width / 2
+    const cy = box.y + box.height / 2
+    return [
+      { key: "nw", x: x1, y: y1, size, cursor: "nwse-resize" },
+      { key: "ne", x: x2, y: y1, size, cursor: "nesw-resize" },
+      { key: "sw", x: x1, y: y2, size, cursor: "nesw-resize" },
+      { key: "se", x: x2, y: y2, size, cursor: "nwse-resize" },
+      { key: "n", x: cx, y: y1, size, cursor: "ns-resize" },
+      { key: "s", x: cx, y: y2, size, cursor: "ns-resize" },
+      { key: "w", x: x1, y: cy, size, cursor: "ew-resize" },
+      { key: "e", x: x2, y: cy, size, cursor: "ew-resize" },
+    ]
+  }
+
   function drawOverlay(current: DetectedBox[]) {
     const overlay = overlayCanvasRef.current
     if (!overlay) return
@@ -199,7 +292,7 @@ export default function PdfTileDetectionPage() {
       ctx.lineWidth = order ? 3 : 2
       ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
       ctx.fillStyle = order ? "#2563eb" : "#ef4444"
-      ctx.fillText(`${index + 1}`, padded.x + 4, padded.y + 14)
+      ctx.fillText(`${order ?? index + 1}`, padded.x + 4, padded.y + 14)
       if (order) {
         ctx.save()
         ctx.fillStyle = "rgba(37, 99, 235, 0.85)"
@@ -238,14 +331,21 @@ export default function PdfTileDetectionPage() {
       if (rectConfigs[selectedRectIndex!]?.include ?? true) {
         const padding = rectConfigs[selectedRectIndex!]?.paddingOverride ?? rectPaddingPx
         const padded = getPaddedRect(selected, padding)
-      ctx.save()
-      ctx.strokeStyle = "#22c55e"
-      ctx.lineWidth = 4
-      ctx.fillStyle = "rgba(34, 197, 94, 0.18)"
-      ctx.fillRect(padded.x, padded.y, padded.width, padded.height)
-      ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
-      ctx.restore()
+        ctx.save()
+        ctx.strokeStyle = "#22c55e"
+        ctx.lineWidth = 4
+        ctx.fillStyle = "rgba(34, 197, 94, 0.18)"
+        ctx.fillRect(padded.x, padded.y, padded.width, padded.height)
+        ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
+        ctx.restore()
+      }
     }
+
+    if (!orderingMode && selected) {
+      const handles = getHandleRects(selected)
+      handles.forEach((handle) => {
+        drawHandle(ctx, handle.x, handle.y, handle.size)
+      })
     }
   }
 
@@ -257,6 +357,10 @@ export default function PdfTileDetectionPage() {
   }, [boxes, hoverRectIndex, selectedRectIndex, rectPaddingPx, rectConfigs])
 
   function handleOverlayClick(event: React.MouseEvent<HTMLCanvasElement>) {
+    if (wasResizingRef.current) {
+      wasResizingRef.current = false
+      return
+    }
     const overlay = overlayCanvasRef.current
     if (!overlay || boxes.length === 0) return
     const rect = overlay.getBoundingClientRect()
@@ -304,6 +408,114 @@ export default function PdfTileDetectionPage() {
     }
   }
 
+  function getCanvasPoint(event: React.MouseEvent<HTMLCanvasElement>) {
+    const overlay = overlayCanvasRef.current
+    if (!overlay) return null
+    const rect = overlay.getBoundingClientRect()
+    const scaleX = overlay.width / rect.width
+    const scaleY = overlay.height / rect.height
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY,
+    }
+  }
+
+  function findHandleAtPoint(point: { x: number; y: number }) {
+    if (selectedRectIndex === null) return null
+    const box = boxes[selectedRectIndex]
+    if (!box) return null
+    const handles = getHandleRects(box)
+    for (const handle of handles) {
+      const half = handle.size / 2
+      const inX = point.x >= handle.x - half && point.x <= handle.x + half
+      const inY = point.y >= handle.y - half && point.y <= handle.y + half
+      if (inX && inY) {
+        return handle
+      }
+    }
+    return null
+  }
+
+  function handleOverlayMouseDown(event: React.MouseEvent<HTMLCanvasElement>) {
+    if (orderingMode) return
+    if (selectedRectIndex === null) return
+    const point = getCanvasPoint(event)
+    if (!point) return
+    const handle = findHandleAtPoint(point)
+    if (!handle) return
+    const rect = boxes[selectedRectIndex]
+    resizeStateRef.current = {
+      index: selectedRectIndex,
+      handle: handle.key,
+      startX: point.x,
+      startY: point.y,
+      rect: { ...rect },
+    }
+    setOverlayCursor(handle.cursor)
+  }
+
+  function handleOverlayMouseMove(event: React.MouseEvent<HTMLCanvasElement>) {
+    const overlay = overlayCanvasRef.current
+    if (!overlay) return
+    const point = getCanvasPoint(event)
+    if (!point) return
+
+    const resizing = resizeStateRef.current
+    if (resizing) {
+      const minSize = 40
+      const canvas = pdfCanvasRef.current
+      const maxW = canvas?.width ?? 0
+      const maxH = canvas?.height ?? 0
+      const dx = point.x - resizing.startX
+      const dy = point.y - resizing.startY
+      let { x, y, width, height } = resizing.rect
+
+      if (resizing.handle.includes("n")) {
+        y = Math.min(y + dy, y + height - minSize)
+        height = height - dy
+      }
+      if (resizing.handle.includes("s")) {
+        height = Math.max(minSize, height + dy)
+      }
+      if (resizing.handle.includes("w")) {
+        x = Math.min(x + dx, x + width - minSize)
+        width = width - dx
+      }
+      if (resizing.handle.includes("e")) {
+        width = Math.max(minSize, width + dx)
+      }
+
+      x = Math.max(0, Math.min(x, maxW - minSize))
+      y = Math.max(0, Math.min(y, maxH - minSize))
+      width = Math.min(width, maxW - x)
+      height = Math.min(height, maxH - y)
+
+      setBoxes((prev) => {
+        const next = [...prev]
+        const target = next[resizing.index]
+        if (!target) return prev
+        next[resizing.index] = { ...target, x, y, width, height }
+        return next
+      })
+      wasResizingRef.current = true
+      return
+    }
+
+    if (orderingMode) {
+      setOverlayCursor("default")
+      return
+    }
+    const handle = findHandleAtPoint(point)
+    setOverlayCursor(handle?.cursor ?? "default")
+  }
+
+  function handleOverlayMouseUp() {
+    if (resizeStateRef.current) {
+      resizeStateRef.current = null
+      setOverlayCursor("default")
+    }
+  }
+
   async function handleDetectTiles() {
     if (!pdfRef.current) {
       toast.error("Upload a PDF first.")
@@ -335,6 +547,7 @@ export default function PdfTileDetectionPage() {
       setSelectedRectIndex(null)
       setCurrentOrderCounter(1)
       setOrderingMode(false)
+      setOrderingFinished(false)
       drawOverlay(detected)
     } catch (error) {
       console.error(error)
@@ -372,6 +585,7 @@ export default function PdfTileDetectionPage() {
       setSelectedRectIndex(null)
       setCurrentOrderCounter(1)
       setOrderingMode(false)
+      setOrderingFinished(false)
     } catch {
       toast.error("Failed to render page.")
     } finally {
@@ -446,10 +660,12 @@ export default function PdfTileDetectionPage() {
       return next
     })
     setCurrentOrderCounter(1)
+    setOrderingFinished(false)
   }
 
   function handleFinishOrdering() {
     setOrderingMode(false)
+    setOrderingFinished(true)
   }
 
   function handleCommitDetected() {
@@ -472,6 +688,96 @@ export default function PdfTileDetectionPage() {
     console.log("Committed detected tiles", committed)
   }
 
+  function handleSelectPdf(entry: PdfEntry) {
+    syncCurrentPdfState()
+    setSelectedPdfId(entry.id)
+    const doc = pdfDocMapRef.current.get(entry.id)
+    pdfRef.current = doc ?? null
+    setPageCount(entry.pageCount)
+    setPageNumber(entry.selectedPage)
+    loadPageState(entry, entry.selectedPage)
+  }
+
+  function syncCurrentPdfState() {
+    if (!selectedPdfId) return
+    if (isSyncingRef.current) return
+    setPdfs((prev) =>
+      prev.map((entry) => {
+        if (entry.id !== selectedPdfId) return entry
+        const pageData: PageData = {
+          boxes,
+          rectConfigs,
+          orderingFinished,
+          currentOrderCounter,
+          rectPaddingPx,
+        }
+        return {
+          ...entry,
+          selectedPage: pageNumber,
+          pages: {
+            ...entry.pages,
+            [pageNumber]: pageData,
+          },
+        }
+      })
+    )
+  }
+
+  function loadPageState(entry: PdfEntry, page: number) {
+    isSyncingRef.current = true
+    const data = entry.pages[page]
+    setBoxes(data?.boxes ?? [])
+    setRectConfigs(data?.rectConfigs ?? {})
+    setRectPaddingPx(data?.rectPaddingPx ?? 10)
+    setCurrentOrderCounter(data?.currentOrderCounter ?? 1)
+    setOrderingFinished(data?.orderingFinished ?? false)
+    setOrderingMode(false)
+    setHoverRectIndex(null)
+    setSelectedRectIndex(null)
+    setPageRendered(false)
+    queueMicrotask(() => {
+      isSyncingRef.current = false
+    })
+  }
+
+  useEffect(() => {
+    if (!selectedPdfId) return
+    syncCurrentPdfState()
+  }, [
+    boxes,
+    rectConfigs,
+    rectPaddingPx,
+    orderingFinished,
+    currentOrderCounter,
+    pageNumber,
+    selectedPdfId,
+  ])
+
+  useEffect(() => {
+    const toPersist = pdfs.map(({ id, name, pageCount, selectedPage, pages }) => ({
+      id,
+      name,
+      pageCount,
+      selectedPage,
+      pages,
+    }))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toPersist))
+  }, [pdfs])
+
+  const selectedPdfEntry = useMemo(
+    () => pdfs.find((entry) => entry.id === selectedPdfId) ?? null,
+    [pdfs, selectedPdfId]
+  )
+
+  const isPageOrdered = useMemo(() => {
+    if (orderingFinished) return true
+    const includedIndexes = boxes
+      .map((_, index) => index)
+      .filter((index) => rectConfigs[index]?.include ?? true)
+    if (includedIndexes.length === 0) return false
+    return includedIndexes.every((index) => rectConfigs[index]?.orderIndex !== undefined)
+  }, [boxes, rectConfigs, orderingFinished])
+
   return (
     <div className="space-y-4">
       <div>
@@ -489,13 +795,48 @@ export default function PdfTileDetectionPage() {
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label>Catalogue PDF</Label>
-                <Input type="file" accept="application/pdf" onChange={handlePdfChange} />
-                {pdfName ? (
-                  <p className="text-xs text-muted-foreground">{pdfName}</p>
-                ) : null}
+                <Input type="file" accept="application/pdf" multiple onChange={handlePdfChange} />
                 {pdfStatus ? (
                   <p className="text-xs text-muted-foreground">{pdfStatus}</p>
                 ) : null}
+              </div>
+              <div className="space-y-2">
+                <Label>PDF list</Label>
+                <div className="max-h-[180px] overflow-auto rounded-md border border-border bg-background p-2 text-xs">
+                  {pdfs.length === 0 ? (
+                    <div className="text-muted-foreground">No PDFs loaded.</div>
+                  ) : (
+                    pdfs.map((entry) => {
+                      const pageData = entry.pages[entry.selectedPage]
+                      const detected = (pageData?.boxes?.length ?? 0) > 0
+                      const includedIndexes = (pageData?.boxes ?? [])
+                        .map((_, index) => index)
+                        .filter((index) => pageData?.rectConfigs?.[index]?.include ?? true)
+                      const ordered =
+                        pageData?.orderingFinished ||
+                        (includedIndexes.length > 0 &&
+                          includedIndexes.every(
+                            (index) => pageData?.rectConfigs?.[index]?.orderIndex !== undefined
+                          ))
+                      return (
+                        <div
+                          key={entry.id}
+                          className={`cursor-pointer rounded px-2 py-1 ${
+                            selectedPdfId === entry.id ? "bg-emerald-100" : "hover:bg-muted"
+                          }`}
+                          onClick={() => handleSelectPdf(entry)}
+                        >
+                          <div className="font-medium">{entry.name}</div>
+                          <div className="text-muted-foreground">
+                            {entry.pageCount} pages   Page {entry.selectedPage}  {" "}
+                            {detected ? "Detected" : "No detections"}  {" "}
+                            {ordered ? "Ordered" : "Not ordered"}
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
               </div>
               <div className="space-y-2">
                 <Label>Page number</Label>
@@ -507,6 +848,9 @@ export default function PdfTileDetectionPage() {
                   onChange={(event) => {
                     setPageNumber(Number(event.target.value))
                     setPageRendered(false)
+                    if (selectedPdfEntry) {
+                      loadPageState(selectedPdfEntry, Number(event.target.value))
+                    }
                   }}
                 />
               </div>
@@ -572,6 +916,10 @@ export default function PdfTileDetectionPage() {
               <Button type="button" onClick={handleDetectTiles} disabled={detecting || !pageRendered}>
                 {detecting ? "Detecting..." : "Detect tiles"}
               </Button>
+              <div className="text-xs text-muted-foreground">
+                Page status: {boxes.length > 0 ? "Detected" : "No detections"}  {" "}
+                {isPageOrdered ? "Ordered" : "Not ordered"}
+              </div>
               <Button type="button" variant="secondary" onClick={handleCommitDetected} disabled={orderedIncluded.length === 0}>
                 Commit detected tiles
               </Button>
@@ -614,7 +962,12 @@ export default function PdfTileDetectionPage() {
                   <canvas
                     ref={overlayCanvasRef}
                     className="absolute left-0 top-0"
+                    style={{ cursor: overlayCursor }}
                     onClick={handleOverlayClick}
+                    onMouseDown={handleOverlayMouseDown}
+                    onMouseMove={handleOverlayMouseMove}
+                    onMouseUp={handleOverlayMouseUp}
+                    onMouseLeave={handleOverlayMouseUp}
                   />
                 </div>
               </div>
@@ -703,3 +1056,4 @@ export default function PdfTileDetectionPage() {
     </div>
   )
 }
+

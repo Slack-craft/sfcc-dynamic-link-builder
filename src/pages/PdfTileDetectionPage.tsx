@@ -32,7 +32,6 @@ export default function PdfTileDetectionPage() {
   const [pageNumber, setPageNumber] = useState(1)
   const [pageCount, setPageCount] = useState(1)
   const [pdfStatus, setPdfStatus] = useState("")
-  const [pdfName, setPdfName] = useState("")
   const [cannyLow, setCannyLow] = useState(50)
   const [cannyHigh, setCannyHigh] = useState(150)
   const [minAreaPercent, setMinAreaPercent] = useState(1)
@@ -145,11 +144,6 @@ export default function PdfTileDetectionPage() {
     return { xPdf, yPdf, wPdf: Math.abs(x2 - x1), hPdf: Math.abs(y2 - y1) }
   }
 
-  function canvasPointToPdfPoint(x: number, y: number, viewport: PageViewport) {
-    const [xPdf, yPdf] = viewport.convertToPdfPoint(x, y)
-    return { xPdf, yPdf }
-  }
-
   function parsePageNumberFromName(fileName: string) {
     const match = fileName.match(/P(\d{2})/i)
     if (!match) return null
@@ -204,14 +198,6 @@ export default function PdfTileDetectionPage() {
       flattened.push(...row.items)
     })
 
-    if (import.meta.env.DEV) {
-      // eslint-disable-next-line no-console
-      console.log("[PDF Detect] Row grouping", {
-        rowTolerance,
-        rows: rows.map((row) => row.items.map((item) => item.index)),
-      })
-    }
-
     return flattened.map((item, order) => ({
       ...item,
       order: order + 1,
@@ -256,7 +242,6 @@ export default function PdfTileDetectionPage() {
         pdfRef.current = pdfDocMapRef.current.get(first.id) ?? null
         setPageCount(first.pageCount)
         setPageNumber(first.selectedPage)
-        setPdfName(first.name)
         setBoxes([])
         setRectConfigs({})
         setRectPaddingPx(10)
@@ -290,7 +275,7 @@ export default function PdfTileDetectionPage() {
     if (!ctx) {
       throw new Error("Canvas 2D context not available")
     }
-    await page.render({ canvasContext: ctx, viewport }).promise
+    await page.render({ canvasContext: ctx, viewport, canvas }).promise
     viewportRef.current = viewport
     if (Array.isArray(page.view)) {
       const [x1, y1, x2, y2] = page.view
@@ -465,20 +450,21 @@ export default function PdfTileDetectionPage() {
     })
 
     if (hitIndex !== null) {
+      const index = hitIndex
       if (orderingMode) {
-        const current = rectConfigs[hitIndex]
+        const current = rectConfigs[index]
         if (current?.include ?? true) {
           if (current?.orderIndex === undefined) {
             setRectConfigs((prev) => ({
               ...prev,
-              [hitIndex]: { ...prev[hitIndex], include: true, orderIndex: currentOrderCounter },
+              [index]: { ...prev[index], include: true, orderIndex: currentOrderCounter },
             }))
             setCurrentOrderCounter((prev) => prev + 1)
           }
         }
       } else {
-        setSelectedRectIndex(hitIndex)
-        const el = listItemRefs.current.get(hitIndex)
+        setSelectedRectIndex(index)
+        const el = listItemRefs.current.get(index)
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "nearest" })
         }
@@ -890,7 +876,6 @@ export default function PdfTileDetectionPage() {
     setSelectedRectIndex(null)
     setPageRendered(false)
     setPdfStatus("")
-    setPdfName("")
     localStorage.removeItem(STORAGE_KEY)
     const canvas = pdfCanvasRef.current
     if (canvas) {
@@ -913,7 +898,6 @@ export default function PdfTileDetectionPage() {
       return
     }
     pdfRef.current = doc ?? null
-    setPdfName(entry.name)
     setPageCount(entry.pageCount)
     setPageNumber(entry.selectedPage)
     loadPageState(entry, entry.selectedPage)
@@ -1073,7 +1057,7 @@ export default function PdfTileDetectionPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+          <div className="grid items-start gap-4 lg:grid-cols-[320px_1fr_360px]">
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label>Catalogue PDF</Label>
@@ -1154,7 +1138,12 @@ export default function PdfTileDetectionPage() {
                   }}
                 />
               </div>
-              <Button type="button" variant="outline" onClick={handleRenderPage} disabled={rendering}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void handleRenderPage()}
+                disabled={rendering}
+              >
                 {rendering ? "Rendering..." : "Render Page"}
               </Button>
               <Button type="button" variant="outline" onClick={handleLoadOpenCv}>
@@ -1258,9 +1247,9 @@ export default function PdfTileDetectionPage() {
                   : "Not loaded"}
               </p>
             </div>
-            <div className="space-y-3">
-              <div className="relative w-full rounded-md border border-border bg-muted/20 p-2">
-                <div className="relative w-full max-w-[1000px]">
+            <div className="space-y-3 min-w-0">
+              <div className="relative w-full min-w-0 rounded-md border border-border bg-muted/20 p-2">
+                <div className="relative w-full min-w-0">
                   <canvas
                     ref={pdfCanvasRef}
                     className="block h-auto w-full max-w-full"
@@ -1278,84 +1267,84 @@ export default function PdfTileDetectionPage() {
                   />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Detected boxes</Label>
-                <div className="max-h-[220px] overflow-auto rounded-md border border-border bg-background p-2 text-xs">
-                  {areaList.length === 0 ? (
-                    <div className="text-muted-foreground">No boxes detected.</div>
-                  ) : (
-                    areaList.map((box) => (
-                      <div
-                        key={`${box.index}-${box.xPdf}-${box.yPdf}`}
-                        ref={(el) => {
-                          if (el) listItemRefs.current.set(box.index, el)
-                        }}
-                        className={`cursor-pointer rounded px-2 py-1 ${
-                          selectedRectIndex === box.index
-                            ? "bg-emerald-100"
-                            : hoverRectIndex === box.index
-                            ? "bg-amber-100"
-                            : "hover:bg-muted"
-                        }`}
-                        onMouseEnter={() => setHoverRectIndex(box.index)}
-                        onMouseLeave={() => setHoverRectIndex(null)}
-                        onClick={() => setSelectedRectIndex(box.index)}
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={rectConfigs[box.index]?.include ?? true}
-                              onChange={(event) =>
-                                handleToggleInclude(box.index, event.target.checked)
-                              }
-                              disabled={orderingMode}
-                            />
-                            Include
-                          </label>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => adjustPadding(box.index, 5)}
+            </div>
+            <div className="space-y-2">
+              <Label>Detected boxes</Label>
+              <div className="max-h-[60vh] overflow-y-auto rounded-md border border-border bg-background p-2 text-xs">
+                {areaList.length === 0 ? (
+                  <div className="text-muted-foreground">No boxes detected.</div>
+                ) : (
+                  areaList.map((box) => (
+                    <div
+                      key={`${box.index}-${box.xPdf}-${box.yPdf}`}
+                      ref={(el) => {
+                        if (el) listItemRefs.current.set(box.index, el)
+                      }}
+                      className={`cursor-pointer rounded px-2 py-1 ${
+                        selectedRectIndex === box.index
+                          ? "bg-emerald-100"
+                          : hoverRectIndex === box.index
+                          ? "bg-amber-100"
+                          : "hover:bg-muted"
+                      }`}
+                      onMouseEnter={() => setHoverRectIndex(box.index)}
+                      onMouseLeave={() => setHoverRectIndex(null)}
+                      onClick={() => setSelectedRectIndex(box.index)}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={rectConfigs[box.index]?.include ?? true}
+                            onChange={(event) =>
+                              handleToggleInclude(box.index, event.target.checked)
+                            }
                             disabled={orderingMode}
-                          >
-                            +5px
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => adjustPadding(box.index, -5)}
-                            disabled={orderingMode}
-                          >
-                            -5px
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => resetPadding(box.index)}
-                            disabled={orderingMode}
-                          >
-                            Reset
-                          </Button>
-                        </div>
-                        <div>
-                          #{box.index + 1} Order #
-                          {orderedIncluded.find((item) => item.index === box.index)?.order ?? "-"} x=
-                          {Math.round(box.xPdf)} y={Math.round(box.yPdf)} w=
-                          {Math.round(box.wPdf)} h={Math.round(box.hPdf)} area=
-                          {Math.round(box.areaPdf)} (
-                        {pageArea > 0
-                          ? `${((box.areaPdf / pageArea) * 100).toFixed(2)}%`
-                          : "0.00%"}
-                        )
-                        </div>
+                          />
+                          Include
+                        </label>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => adjustPadding(box.index, 5)}
+                          disabled={orderingMode}
+                        >
+                          +5px
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => adjustPadding(box.index, -5)}
+                          disabled={orderingMode}
+                        >
+                          -5px
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => resetPadding(box.index)}
+                          disabled={orderingMode}
+                        >
+                          Reset
+                        </Button>
                       </div>
-                    ))
-                  )}
-                </div>
+                      <div>
+                        #{box.index + 1} Order #
+                        {orderedIncluded.find((item) => item.index === box.index)?.order ?? "-"} x=
+                        {Math.round(box.xPdf)} y={Math.round(box.yPdf)} w=
+                        {Math.round(box.wPdf)} h={Math.round(box.hPdf)} area=
+                        {Math.round(box.areaPdf)} (
+                      {pageArea > 0
+                        ? `${((box.areaPdf / pageArea) * 100).toFixed(2)}%`
+                        : "0.00%"}
+                      )
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>

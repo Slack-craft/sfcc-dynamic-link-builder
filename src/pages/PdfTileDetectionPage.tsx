@@ -1127,16 +1127,18 @@ export default function PdfTileDetectionPage() {
                   ) : (
                     pdfs.map((entry) => {
                       const pageData = entry.pages[entry.selectedPage]
-                      const detected = (pageData?.boxes?.length ?? 0) > 0
                       const includedIndexes = (pageData?.boxes ?? [])
                         .map((_, index) => index)
                         .filter((index) => pageData?.rectConfigs?.[index]?.include ?? true)
-                      const ordered =
-                        pageData?.orderingFinished ||
-                        (includedIndexes.length > 0 &&
-                          includedIndexes.every(
-                            (index) => pageData?.rectConfigs?.[index]?.orderIndex !== undefined
-                          ))
+                      const orderedIndexes = includedIndexes.filter(
+                        (index) => typeof pageData?.rectConfigs?.[index]?.orderIndex === "number"
+                      )
+                      const statusLabel =
+                        includedIndexes.length === 0
+                          ? "No tiles"
+                          : orderedIndexes.length === includedIndexes.length
+                          ? "Ordered"
+                          : "Not Ordered"
                       return (
                         <div
                           key={entry.id}
@@ -1148,8 +1150,7 @@ export default function PdfTileDetectionPage() {
                           <div className="font-medium">{entry.name}</div>
                           <div className="text-muted-foreground">
                             {entry.pageCount} pages   Page {entry.selectedPage}  {" "}
-                            {detected ? "Detected" : "No detections"}  {" "}
-                            {ordered ? "Ordered" : "Not ordered"}
+                            {statusLabel}
                           </div>
                         </div>
                       )

@@ -73,6 +73,9 @@ export default function PdfTileDetectionPage() {
   const pageSizeRef = useRef<{ width: number; height: number } | null>(null)
   const renderTaskRef = useRef<any | null>(null)
   const renderTokenRef = useRef(0)
+  const detectTokenRef = useRef(0)
+  const persistTimerRef = useRef<number | null>(null)
+  const hydrationDoneRef = useRef(false)
   const listItemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const pdfDocMapRef = useRef<Map<string, PDFDocumentProxy>>(new Map())
   const isSyncingRef = useRef(false)
@@ -104,21 +107,9 @@ export default function PdfTileDetectionPage() {
     missing?: boolean
   }
 
-  const STORAGE_KEY = "sca_pdf_tile_detection_v1"
-  const [pdfs, setPdfs] = useState<PdfEntry[]>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (!raw) return []
-      const parsed = JSON.parse(raw)
-      if (!Array.isArray(parsed)) return []
-      return parsed as PdfEntry[]
-    } catch {
-      return []
-    }
-  })
-  const [selectedPdfId, setSelectedPdfId] = useState<string | null>(
-    () => pdfs[0]?.id ?? null
-  )
+  const STORAGE_KEY = "sca_pdf_tile_project_v1"
+  const [pdfs, setPdfs] = useState<PdfEntry[]>([])
+  const [selectedPdfId, setSelectedPdfId] = useState<string | null>(null)
 
   const areaList = useMemo(
     () =>
@@ -689,6 +680,7 @@ export default function PdfTileDetectionPage() {
       toast.error("Upload a PDF first.")
       return
     }
+    const token = ++detectTokenRef.current
     setDetecting(true)
     try {
       await loadOpenCv()
@@ -710,6 +702,7 @@ export default function PdfTileDetectionPage() {
         dilateIterations,
       })
       const dpr = window.devicePixelRatio || 1
+      if (token !== detectTokenRef.current) return
       const converted = detected.map((rect) => {
         const cssRect = {
           x: rect.x / dpr,
@@ -739,9 +732,13 @@ export default function PdfTileDetectionPage() {
     } catch (error) {
       console.error(error)
       const message = error instanceof Error ? error.message : "Tile detection failed."
-      toast.error(message)
+      if (token === detectTokenRef.current) {
+        toast.error(message)
+      }
     } finally {
-      setDetecting(false)
+      if (token === detectTokenRef.current) {
+        setDetecting(false)
+      }
     }
   }
 
@@ -932,6 +929,18 @@ export default function PdfTileDetectionPage() {
   }
 
   async function clearPdfState() {
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current)
+      persistTimerRef.current = null
+    }
+    hydrationDoneRef.current = false
+    detectTokenRef.current += 1
+    try {
+      renderTaskRef.current?.cancel()
+    } catch {
+      // ignore cancel errors
+    }
+    renderTaskRef.current = null
     setPdfs([])
     setSelectedPdfId(null)
     pdfRef.current = null
@@ -960,6 +969,7 @@ export default function PdfTileDetectionPage() {
       const ctx = overlay.getContext("2d")
       if (ctx) ctx.clearRect(0, 0, overlay.width, overlay.height)
     }
+    hydrationDoneRef.current = true
   }
 
   async function handleSelectPdf(entry: PdfEntry) {
@@ -990,6 +1000,7 @@ export default function PdfTileDetectionPage() {
   }
 
   function syncCurrentPdfState() {
+    if (!hydrationDoneRef.current) return
     if (!selectedPdfId) return
     if (isSyncingRef.current) return
     setPdfs((prev) =>
@@ -1045,62 +1056,84 @@ export default function PdfTileDetectionPage() {
   ])
 
   useEffect(() => {
-    const toPersist = pdfs.map(({ id, name, pageCount, selectedPage, pages, fileId }) => ({
-      id,
-      name,
-      pageCount,
-      selectedPage,
-      pages,
-      fileId,
-    }))
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toPersist))
+    if (!hydrationDoneRef.current) return
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current)
+    }
+    persistTimerRef.current = window.setTimeout(() => {
+      const toPersist = pdfs.map(({ id, name, pageCount, selectedPage, pages, fileId }) => ({
+        id,
+        name,
+        pageCount,
+        selectedPage,
+        pages,
+        fileId,
+      }))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toPersist))
+      persistTimerRef.current = null
+    }, 300)
+    return () => {
+      if (persistTimerRef.current !== null) {
+        window.clearTimeout(persistTimerRef.current)
+      }
+    }
   }, [pdfs])
 
   useEffect(() => {
     let cancelled = false
-    async function hydratePdfs() {
-      const updates: PdfEntry[] = []
-      for (const entry of pdfs) {
-        if (pdfDocMapRef.current.has(entry.id)) continue
-        if (!entry.fileId) {
-          updates.push({ ...entry, missing: true })
-          continue
+    async function hydrateProject() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (!raw) {
+          hydrationDoneRef.current = true
+          return
         }
-        try {
-          const stored = await getPdf(entry.fileId)
-          if (!stored) {
-            updates.push({ ...entry, missing: true })
+        const parsed = JSON.parse(raw)
+        if (!Array.isArray(parsed)) {
+          hydrationDoneRef.current = true
+          return
+        }
+        const entries = parsed as PdfEntry[]
+        const hydrated: PdfEntry[] = []
+        for (const entry of entries) {
+          if (!entry.fileId) {
+            hydrated.push({ ...entry, missing: true })
             continue
           }
-          const buffer = await stored.blob.arrayBuffer()
-          const doc = await pdfjsLib.getDocument({ data: buffer }).promise
-          pdfDocMapRef.current.set(entry.id, doc)
-          updates.push({ ...entry, missing: false })
-          if (!selectedPdfId || selectedPdfId === entry.id) {
-            await handleSelectPdf({ ...entry, missing: false })
+          try {
+            const stored = await getPdf(entry.fileId)
+            if (!stored) {
+              hydrated.push({ ...entry, missing: true })
+              continue
+            }
+            const buffer = await stored.blob.arrayBuffer()
+            const doc = await pdfjsLib.getDocument({ data: buffer }).promise
+            pdfDocMapRef.current.set(entry.id, doc)
+            hydrated.push({ ...entry, missing: false })
+          } catch {
+            hydrated.push({ ...entry, missing: true })
           }
-        } catch {
-          updates.push({ ...entry, missing: true })
+        }
+        if (cancelled) return
+        setPdfs(hydrated)
+        const first = hydrated[0]
+        if (first) {
+          setSelectedPdfId(first.id)
+          if (pdfDocMapRef.current.has(first.id)) {
+            await handleSelectPdf(first)
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          hydrationDoneRef.current = true
         }
       }
-      if (cancelled || updates.length === 0) return
-      setPdfs((prev) => {
-        let changed = false
-        const next = prev.map((entry) => {
-          const update = updates.find((u) => u.id === entry.id)
-          if (!update) return entry
-          if (entry.missing === update.missing) return entry
-          changed = true
-          return update
-        })
-        return changed ? next : prev
-      })
     }
-    void hydratePdfs()
+    void hydrateProject()
     return () => {
       cancelled = true
     }
-  }, [pdfs, selectedPdfId])
+  }, [])
 
   const selectedPdfEntry = useMemo(
     () => pdfs.find((entry) => entry.id === selectedPdfId) ?? null,

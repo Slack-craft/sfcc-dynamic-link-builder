@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { Eye, EyeOff } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,9 +16,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { detectTilesInCanvas, type DetectedBox } from "@/tools/catalogue-builder/pdfTileDetect"
+import { detectTilesInCanvas } from "@/tools/catalogue-builder/pdfTileDetect"
 import { loadOpenCv } from "@/lib/loadOpenCv"
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api"
+import type { PageViewport } from "pdfjs-dist/types/src/display/display_utils"
 import * as pdfjsLib from "pdfjs-dist"
 import "pdfjs-dist/build/pdf.worker.min.mjs"
 
@@ -35,7 +37,16 @@ export default function PdfTileDetectionPage() {
   const [cannyHigh, setCannyHigh] = useState(150)
   const [minAreaPercent, setMinAreaPercent] = useState(1)
   const [dilateIterations, setDilateIterations] = useState(2)
-  const [boxes, setBoxes] = useState<DetectedBox[]>([])
+  type PdfBox = {
+    pageNumber: number
+    xPdf: number
+    yPdf: number
+    wPdf: number
+    hPdf: number
+    areaPdf: number
+  }
+
+  const [boxes, setBoxes] = useState<PdfBox[]>([])
   const [rectPaddingPx, setRectPaddingPx] = useState(10)
   const [rectConfigs, setRectConfigs] = useState<
     Record<number, { include: boolean; paddingOverride?: number; orderIndex?: number }>
@@ -51,10 +62,13 @@ export default function PdfTileDetectionPage() {
   const [hoverRectIndex, setHoverRectIndex] = useState<number | null>(null)
   const [selectedRectIndex, setSelectedRectIndex] = useState<number | null>(null)
   const [orderingFinished, setOrderingFinished] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const pdfRef = useRef<PDFDocumentProxy | null>(null)
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const viewportRef = useRef<PageViewport | null>(null)
+  const pageSizeRef = useRef<{ width: number; height: number } | null>(null)
   const listItemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const pdfDocMapRef = useRef<Map<string, PDFDocumentProxy>>(new Map())
   const isSyncingRef = useRef(false)
@@ -64,13 +78,13 @@ export default function PdfTileDetectionPage() {
     handle: string
     startX: number
     startY: number
-    rect: DetectedBox
+    rect: { x: number; y: number; width: number; height: number }
   } | null>(null)
   const wasResizingRef = useRef(false)
 
   type RectConfig = { include: boolean; paddingOverride?: number; orderIndex?: number }
   type PageData = {
-    boxes: DetectedBox[]
+    boxes: PdfBox[]
     rectConfigs: Record<number, RectConfig>
     orderingFinished?: boolean
     currentOrderCounter?: number
@@ -109,6 +123,33 @@ export default function PdfTileDetectionPage() {
     [boxes]
   )
 
+  function pdfRectToCanvasRect(rect: PdfBox, viewport: PageViewport) {
+    const [x1, y1] = viewport.convertToViewportPoint(rect.xPdf, rect.yPdf)
+    const [x2, y2] = viewport.convertToViewportPoint(
+      rect.xPdf + rect.wPdf,
+      rect.yPdf + rect.hPdf
+    )
+    const x = Math.min(x1, x2)
+    const y = Math.min(y1, y2)
+    return { x, y, width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) }
+  }
+
+  function canvasRectToPdfRect(
+    rect: { x: number; y: number; width: number; height: number },
+    viewport: PageViewport
+  ) {
+    const [x1, y1] = viewport.convertToPdfPoint(rect.x, rect.y)
+    const [x2, y2] = viewport.convertToPdfPoint(rect.x + rect.width, rect.y + rect.height)
+    const xPdf = Math.min(x1, x2)
+    const yPdf = Math.min(y1, y2)
+    return { xPdf, yPdf, wPdf: Math.abs(x2 - x1), hPdf: Math.abs(y2 - y1) }
+  }
+
+  function canvasPointToPdfPoint(x: number, y: number, viewport: PageViewport) {
+    const [xPdf, yPdf] = viewport.convertToPdfPoint(x, y)
+    return { xPdf, yPdf }
+  }
+
   function parsePageNumberFromName(fileName: string) {
     const match = fileName.match(/P(\d{2})/i)
     if (!match) return null
@@ -121,7 +162,7 @@ export default function PdfTileDetectionPage() {
       .map((box, index) => ({
         box,
         index,
-        cy: box.y + box.height / 2,
+        cy: box.yPdf + box.hPdf / 2,
       }))
       .filter(({ index }) => rectConfigs[index]?.include ?? true)
     if (included.length === 0) return []
@@ -138,7 +179,7 @@ export default function PdfTileDetectionPage() {
       return manual
     }
 
-    const heights = included.map((item) => item.box.height).sort((a, b) => a - b)
+    const heights = included.map((item) => item.box.hPdf).sort((a, b) => a - b)
     const medianHeight =
       heights.length % 2 === 1
         ? heights[Math.floor(heights.length / 2)]
@@ -159,7 +200,7 @@ export default function PdfTileDetectionPage() {
 
     const flattened: typeof sortedByCy = []
     rows.forEach((row) => {
-      row.items.sort((a, b) => a.box.x - b.box.x)
+      row.items.sort((a, b) => a.box.xPdf - b.box.xPdf)
       flattened.push(...row.items)
     })
 
@@ -178,9 +219,9 @@ export default function PdfTileDetectionPage() {
   }, [boxes, rectConfigs])
 
   const pageArea = useMemo(() => {
-    const canvas = pdfCanvasRef.current
-    if (!canvas) return 0
-    return canvas.width * canvas.height
+    const size = pageSizeRef.current
+    if (!size) return 0
+    return size.width * size.height
   }, [pageRendered, boxes.length])
 
   async function handlePdfChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -193,17 +234,13 @@ export default function PdfTileDetectionPage() {
         const buffer = await file.arrayBuffer()
         const doc = await pdfjsLib.getDocument({ data: buffer }).promise
         const pageNumberFromName = parsePageNumberFromName(file.name)
-        const initialPage = Math.min(
-          Math.max(pageNumberFromName ?? 1, 1),
-          doc.numPages
-        )
         const id = crypto.randomUUID()
         pdfDocMapRef.current.set(id, doc)
         newEntries.push({
           id,
           name: file.name,
           pageCount: doc.numPages,
-          selectedPage: initialPage,
+          selectedPage: pageNumberFromName ?? 1,
           pages: {},
         })
       } catch {
@@ -240,7 +277,13 @@ export default function PdfTileDetectionPage() {
       throw new Error("PDF not loaded")
     }
     const page = await pdf.getPage(targetPage ?? pageNumber)
-    const viewport = page.getViewport({ scale: 1.8 })
+    const baseViewport = page.getViewport({ scale: 1 })
+    const container = canvas.parentElement as HTMLElement | null
+    const maxWidth = 1100
+    const containerWidth = container?.clientWidth ?? baseViewport.width
+    const targetWidth = Math.min(containerWidth, maxWidth, baseViewport.width)
+    const scale = targetWidth / baseViewport.width
+    const viewport = page.getViewport({ scale })
     canvas.width = Math.floor(viewport.width)
     canvas.height = Math.floor(viewport.height)
     const ctx = canvas.getContext("2d")
@@ -248,6 +291,11 @@ export default function PdfTileDetectionPage() {
       throw new Error("Canvas 2D context not available")
     }
     await page.render({ canvasContext: ctx, viewport }).promise
+    viewportRef.current = viewport
+    if (Array.isArray(page.view)) {
+      const [x1, y1, x2, y2] = page.view
+      pageSizeRef.current = { width: x2 - x1, height: y2 - y1 }
+    }
     const overlay = overlayCanvasRef.current
     if (overlay) {
       overlay.width = canvas.width
@@ -260,14 +308,17 @@ export default function PdfTileDetectionPage() {
     setPageRendered(true)
   }
 
-  function getPaddedRect(box: DetectedBox, padding: number) {
+  function getPaddedRect(box: PdfBox, padding: number) {
     const canvas = pdfCanvasRef.current
+    const viewport = viewportRef.current
+    if (!canvas || !viewport) return { x: 0, y: 0, width: 0, height: 0 }
     const maxW = canvas?.width ?? 0
     const maxH = canvas?.height ?? 0
-    const x = Math.max(0, box.x - padding)
-    const y = Math.max(0, box.y - padding)
-    const width = Math.min(maxW - x, box.width + padding * 2)
-    const height = Math.min(maxH - y, box.height + padding * 2)
+    const canvasRect = pdfRectToCanvasRect(box, viewport)
+    const x = Math.max(0, canvasRect.x - padding)
+    const y = Math.max(0, canvasRect.y - padding)
+    const width = Math.min(maxW - x, canvasRect.width + padding * 2)
+    const height = Math.min(maxH - y, canvasRect.height + padding * 2)
     return { x, y, width, height }
   }
 
@@ -279,7 +330,7 @@ export default function PdfTileDetectionPage() {
     ctx.strokeRect(x - size / 2, y - size / 2, size, size)
   }
 
-  function getHandleRects(box: DetectedBox) {
+  function getHandleRects(box: { x: number; y: number; width: number; height: number }) {
     const size = 8
     const x1 = box.x
     const y1 = box.y
@@ -299,11 +350,13 @@ export default function PdfTileDetectionPage() {
     ]
   }
 
-  function drawOverlay(current: DetectedBox[]) {
+  function drawOverlay(current: PdfBox[]) {
     const overlay = overlayCanvasRef.current
     if (!overlay) return
     const ctx = overlay.getContext("2d")
     if (!ctx) return
+    const viewport = viewportRef.current
+    if (!viewport) return
     ctx.clearRect(0, 0, overlay.width, overlay.height)
     ctx.strokeStyle = "#ef4444"
     ctx.lineWidth = 2
@@ -334,10 +387,8 @@ export default function PdfTileDetectionPage() {
       }
     })
 
-    const selected =
-      selectedRectIndex !== null ? current[selectedRectIndex] : null
-    const hovered =
-      hoverRectIndex !== null ? current[hoverRectIndex] : null
+    const selected = selectedRectIndex !== null ? current[selectedRectIndex] : null
+    const hovered = hoverRectIndex !== null ? current[hoverRectIndex] : null
 
     if (hovered) {
       if (rectConfigs[hoverRectIndex!]?.include ?? true) {
@@ -368,7 +419,8 @@ export default function PdfTileDetectionPage() {
     }
 
     if (!orderingMode && selected) {
-      const handles = getHandleRects(selected)
+      const canvasRect = pdfRectToCanvasRect(selected, viewport)
+      const handles = getHandleRects(canvasRect)
       handles.forEach((handle) => {
         drawHandle(ctx, handle.x, handle.y, handle.size)
       })
@@ -482,7 +534,10 @@ export default function PdfTileDetectionPage() {
     if (selectedRectIndex === null) return null
     const box = boxes[selectedRectIndex]
     if (!box) return null
-    const handles = getHandleRects(box)
+    const viewport = viewportRef.current
+    if (!viewport) return null
+    const canvasRect = pdfRectToCanvasRect(box, viewport)
+    const handles = getHandleRects(canvasRect)
     for (const handle of handles) {
       const half = handle.size / 2
       const inX = point.x >= handle.x - half && point.x <= handle.x + half
@@ -502,12 +557,15 @@ export default function PdfTileDetectionPage() {
     const handle = findHandleAtPoint(point)
     if (!handle) return
     const rect = boxes[selectedRectIndex]
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const canvasRect = pdfRectToCanvasRect(rect, viewport)
     resizeStateRef.current = {
       index: selectedRectIndex,
       handle: handle.key,
       startX: point.x,
       startY: point.y,
-      rect: { ...rect },
+      rect: { ...canvasRect },
     }
     setOverlayCursor(handle.cursor)
   }
@@ -522,6 +580,8 @@ export default function PdfTileDetectionPage() {
     if (resizing) {
       const minSize = 40
       const canvas = pdfCanvasRef.current
+      const viewport = viewportRef.current
+      if (!viewport || !canvas) return
       const maxW = canvas?.width ?? 0
       const maxH = canvas?.height ?? 0
       const dx = point.x - resizing.startX
@@ -548,11 +608,16 @@ export default function PdfTileDetectionPage() {
       width = Math.min(width, maxW - x)
       height = Math.min(height, maxH - y)
 
+      const pdfRect = canvasRectToPdfRect({ x, y, width, height }, viewport)
       setBoxes((prev) => {
         const next = [...prev]
         const target = next[resizing.index]
         if (!target) return prev
-        next[resizing.index] = { ...target, x, y, width, height }
+        next[resizing.index] = {
+          ...target,
+          ...pdfRect,
+          areaPdf: pdfRect.wPdf * pdfRect.hPdf,
+        }
         return next
       })
       wasResizingRef.current = true
@@ -589,16 +654,28 @@ export default function PdfTileDetectionPage() {
       if (!canvas) {
         throw new Error("PDF canvas missing")
       }
+      const viewport = viewportRef.current
+      if (!viewport) {
+        throw new Error("Viewport not ready")
+      }
       const detected = await detectTilesInCanvas(canvas, {
         cannyLow,
         cannyHigh,
         minAreaPercent,
         dilateIterations,
       })
-      setBoxes(detected)
+      const converted = detected.map((rect) => {
+        const pdfRect = canvasRectToPdfRect(rect, viewport)
+        return {
+          pageNumber,
+          ...pdfRect,
+          areaPdf: pdfRect.wPdf * pdfRect.hPdf,
+        }
+      })
+      setBoxes(converted)
       setRectConfigs(
         Object.fromEntries(
-          detected.map((_, index) => [index, { include: true }])
+          converted.map((_, index) => [index, { include: true }])
         )
       )
       setHoverRectIndex(null)
@@ -606,7 +683,7 @@ export default function PdfTileDetectionPage() {
       setCurrentOrderCounter(1)
       setOrderingMode(false)
       setOrderingFinished(false)
-      drawOverlay(detected)
+      drawOverlay(converted)
     } catch (error) {
       console.error(error)
       const message = error instanceof Error ? error.message : "Tile detection failed."
@@ -773,20 +850,24 @@ export default function PdfTileDetectionPage() {
   }
 
   function handleCommitDetected() {
-    const canvas = pdfCanvasRef.current
-    const pageW = canvas?.width ?? 0
-    const pageH = canvas?.height ?? 0
+    const pageSize = pageSizeRef.current
+    const viewport = viewportRef.current
+    if (!viewport || !pageSize) return
     const committed = orderedIncluded.map((item) => {
       const padding = rectConfigs[item.index]?.paddingOverride ?? rectPaddingPx
       const padded = getPaddedRect(item.box, padding)
+      const pdfRect = canvasRectToPdfRect(padded, viewport)
       return {
         page: pageNumber,
-        x: padded.x,
-        y: padded.y,
-        width: padded.width,
-        height: padded.height,
+        x: pdfRect.xPdf,
+        y: pdfRect.yPdf,
+        width: pdfRect.wPdf,
+        height: pdfRect.hPdf,
         order: item.order,
-        areaPercent: pageW && pageH ? padded.width * padded.height / (pageW * pageH) : 0,
+        areaPercent:
+          pageSize.width && pageSize.height
+            ? (pdfRect.wPdf * pdfRect.hPdf) / (pageSize.width * pageSize.height)
+            : 0,
       }
     })
     console.log("Committed detected tiles", committed)
@@ -834,12 +915,11 @@ export default function PdfTileDetectionPage() {
     pdfRef.current = doc ?? null
     setPdfName(entry.name)
     setPageCount(entry.pageCount)
-    const safePage = Math.min(Math.max(entry.selectedPage, 1), entry.pageCount)
-    setPageNumber(safePage)
-    loadPageState(entry, safePage)
+    setPageNumber(entry.selectedPage)
+    loadPageState(entry, entry.selectedPage)
     try {
-      await renderPage(safePage)
-      drawOverlay(entry.pages[safePage]?.boxes ?? [])
+      await renderPage(entry.selectedPage)
+      drawOverlay(entry.pages[entry.selectedPage]?.boxes ?? [])
     } catch {
       toast.error("Failed to render page.")
     }
@@ -979,6 +1059,16 @@ export default function PdfTileDetectionPage() {
               >
                 {orderingMode ? "Exit Ordering Mode" : "Enable Ordering Mode"}
               </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                onClick={() => setAdvancedOpen((prev) => !prev)}
+                title={advancedOpen ? "Hide advanced settings" : "Show advanced settings"}
+                aria-label={advancedOpen ? "Hide advanced settings" : "Show advanced settings"}
+              >
+                {advancedOpen ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -1070,59 +1160,65 @@ export default function PdfTileDetectionPage() {
               <Button type="button" variant="outline" onClick={handleLoadOpenCv}>
                 Load OpenCV
               </Button>
-              <div className="space-y-2">
-                <Label>Box padding (px)</Label>
-                <Input
-                  type="range"
-                  min={0}
-                  max={40}
-                  step={1}
-                  value={rectPaddingPx}
-                  onChange={(event) => setRectPaddingPx(Number(event.target.value))}
-                />
-                <div className="text-xs text-muted-foreground">Current: {rectPaddingPx}px</div>
-              </div>
-              <div className="space-y-2">
-                <Label>Canny low</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={255}
-                  value={cannyLow}
-                  onChange={(event) => setCannyLow(Number(event.target.value))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Canny high</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={255}
-                  value={cannyHigh}
-                  onChange={(event) => setCannyHigh(Number(event.target.value))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Min area (%)</Label>
-                <Input
-                  type="number"
-                  min={0.1}
-                  max={20}
-                  step={0.1}
-                  value={minAreaPercent}
-                  onChange={(event) => setMinAreaPercent(Number(event.target.value))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Dilate iterations</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={10}
-                  value={dilateIterations}
-                  onChange={(event) => setDilateIterations(Number(event.target.value))}
-                />
-              </div>
+              {advancedOpen ? (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>Box padding (px)</Label>
+                    <Input
+                      type="range"
+                      min={0}
+                      max={40}
+                      step={1}
+                      value={rectPaddingPx}
+                      onChange={(event) => setRectPaddingPx(Number(event.target.value))}
+                    />
+                    <div className="text-xs text-muted-foreground">
+                      Current: {rectPaddingPx}px
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Canny low</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={255}
+                      value={cannyLow}
+                      onChange={(event) => setCannyLow(Number(event.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Canny high</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={255}
+                      value={cannyHigh}
+                      onChange={(event) => setCannyHigh(Number(event.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Min area (%)</Label>
+                    <Input
+                      type="number"
+                      min={0.1}
+                      max={20}
+                      step={0.1}
+                      value={minAreaPercent}
+                      onChange={(event) => setMinAreaPercent(Number(event.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Dilate iterations</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={10}
+                      value={dilateIterations}
+                      onChange={(event) => setDilateIterations(Number(event.target.value))}
+                    />
+                  </div>
+                </div>
+              ) : null}
               <Button type="button" onClick={handleDetectTiles} disabled={detecting || !pageRendered}>
                 {detecting ? "Detecting..." : "Re-detect tiles"}
               </Button>
@@ -1163,12 +1259,15 @@ export default function PdfTileDetectionPage() {
               </p>
             </div>
             <div className="space-y-3">
-              <div className="relative max-h-[520px] overflow-auto rounded-md border border-border bg-muted/20 p-2">
-                <div className="relative inline-block">
-                  <canvas ref={pdfCanvasRef} className="block" />
+              <div className="relative w-full rounded-md border border-border bg-muted/20 p-2">
+                <div className="relative w-full max-w-[1000px]">
+                  <canvas
+                    ref={pdfCanvasRef}
+                    className="block h-auto w-full max-w-full"
+                  />
                   <canvas
                     ref={overlayCanvasRef}
-                    className="absolute left-0 top-0"
+                    className="absolute left-0 top-0 h-full w-full"
                     style={{ cursor: overlayCursor }}
                     onClick={handleOverlayClick}
                     onContextMenu={handleOverlayContextMenu}
@@ -1187,7 +1286,7 @@ export default function PdfTileDetectionPage() {
                   ) : (
                     areaList.map((box) => (
                       <div
-                        key={`${box.index}-${box.x}-${box.y}`}
+                        key={`${box.index}-${box.xPdf}-${box.yPdf}`}
                         ref={(el) => {
                           if (el) listItemRefs.current.set(box.index, el)
                         }}
@@ -1245,10 +1344,11 @@ export default function PdfTileDetectionPage() {
                         <div>
                           #{box.index + 1} Order #
                           {orderedIncluded.find((item) => item.index === box.index)?.order ?? "-"} x=
-                          {Math.round(box.x)} y={Math.round(box.y)} w={Math.round(box.width)} h=
-                          {Math.round(box.height)} area={Math.round(box.area)} (
+                          {Math.round(box.xPdf)} y={Math.round(box.yPdf)} w=
+                          {Math.round(box.wPdf)} h={Math.round(box.hPdf)} area=
+                          {Math.round(box.areaPdf)} (
                         {pageArea > 0
-                          ? `${((box.area / pageArea) * 100).toFixed(2)}%`
+                          ? `${((box.areaPdf / pageArea) * 100).toFixed(2)}%`
                           : "0.00%"}
                         )
                         </div>

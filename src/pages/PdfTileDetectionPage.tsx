@@ -95,6 +95,7 @@ export default function PdfTileDetectionPage({
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [viewportCssSize, setViewportCssSize] = useState({ width: 0, height: 0 })
   const [showAllImages, setShowAllImages] = useState(false)
+  const [showMatched, setShowMatched] = useState(false)
   const [imageAssets, setImageAssets] = useState<
     { assetId: string; name: string; url: string; spreadNumber: number | null }[]
   >([])
@@ -1593,6 +1594,15 @@ export default function PdfTileDetectionPage({
     )
   }, [visibleImages])
 
+  const filteredImages = useMemo(() => {
+    if (showMatched) return sortedVisibleImages
+    return sortedVisibleImages.filter((image) => !rectIdByImageId.has(image.assetId))
+  }, [showMatched, sortedVisibleImages, rectIdByImageId])
+
+  const matchedCount = useMemo(() => {
+    return sortedVisibleImages.filter((image) => rectIdByImageId.has(image.assetId)).length
+  }, [sortedVisibleImages, rectIdByImageId])
+
   useEffect(() => {
     if (!isDev) return
     if (boxes.length === 0) return
@@ -2106,7 +2116,7 @@ export default function PdfTileDetectionPage({
               </div>
             </div>
             <div className="space-y-4">
-              <Card>
+              <Card className="flex max-h-[850px] flex-col">
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <CardTitle>Match Tiles</CardTitle>
@@ -2119,10 +2129,20 @@ export default function PdfTileDetectionPage({
                       >
                         {showAllImages ? "Show current spread" : "Show all images"}
                       </Button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => setShowMatched((prev) => !prev)}
+                        title={showMatched ? "Hide matched" : "Show matched"}
+                        aria-label={showMatched ? "Hide matched" : "Show matched"}
+                      >
+                        {showMatched ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="space-y-3">
+                <CardContent className="flex max-h-[850px] flex-1 flex-col gap-3 overflow-y-auto">
                   {matchMode ? (
                     <p className="text-xs text-muted-foreground">
                       Select a rectangle, then click a tile image to assign. Right-click a rect to clear.
@@ -2132,31 +2152,17 @@ export default function PdfTileDetectionPage({
                       Enable Match Mode to link rects with tile images.
                     </p>
                   )}
-                  {matchMode && selectedRectIndex !== null ? (
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="text-muted-foreground">
-                        Selected rect: #{selectedRectIndex + 1}
-                      </span>
-                      {boxes[selectedRectIndex] &&
-                      tileMatches[boxes[selectedRectIndex].rectId] ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => clearMatch(boxes[selectedRectIndex].rectId)}
-                        >
-                          Clear match
-                        </Button>
-                      ) : null}
-                    </div>
-                  ) : null}
+                  <div className="text-[11px] text-muted-foreground">
+                    Showing {filteredImages.length} of {sortedVisibleImages.length} (
+                    {matchedCount} matched)
+                  </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {sortedVisibleImages.length === 0 ? (
+                    {filteredImages.length === 0 ? (
                       <div className="col-span-full text-xs text-muted-foreground">
                         No images for this spread.
                       </div>
                     ) : (
-                      sortedVisibleImages.map((image) => {
+                      filteredImages.map((image) => {
                         const rectId = rectIdByImageId.get(image.assetId)
                         const matchedIndex = rectId
                           ? boxes.findIndex((box) => box.rectId === rectId)
@@ -2166,7 +2172,7 @@ export default function PdfTileDetectionPage({
                           <button
                             key={image.assetId}
                             type="button"
-                            className={`flex flex-col items-start gap-1 rounded-md border px-2 py-2 text-left text-xs ${
+                            className={`flex flex-col items-start gap-1 rounded-md border px-2 py-2 text-left text-xs transition-opacity ${
                               isMatched ? "border-emerald-500 bg-emerald-50" : "border-border hover:bg-muted"
                             }`}
                             onClick={() => {

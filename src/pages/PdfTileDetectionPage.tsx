@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { detectTilesInCanvas } from "@/tools/catalogue-builder/pdfTileDetect"
 import { loadOpenCv } from "@/lib/loadOpenCv"
+import { clearPdfStore, getPdf, putPdf } from "@/lib/pdfStore"
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api"
 import type { PageViewport } from "pdfjs-dist/types/src/display/display_utils"
 import * as pdfjsLib from "pdfjs-dist"
@@ -70,6 +71,8 @@ export default function PdfTileDetectionPage() {
   const renderHostRef = useRef<HTMLDivElement | null>(null)
   const viewportRef = useRef<PageViewport | null>(null)
   const pageSizeRef = useRef<{ width: number; height: number } | null>(null)
+  const renderTaskRef = useRef<any | null>(null)
+  const renderTokenRef = useRef(0)
   const listItemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const pdfDocMapRef = useRef<Map<string, PDFDocumentProxy>>(new Map())
   const isSyncingRef = useRef(false)
@@ -97,6 +100,8 @@ export default function PdfTileDetectionPage() {
     pageCount: number
     selectedPage: number
     pages: Record<number, PageData>
+    fileId?: string
+    missing?: boolean
   }
 
   const STORAGE_KEY = "sca_pdf_tile_detection_v1"
@@ -241,6 +246,15 @@ export default function PdfTileDetectionPage() {
     for (const file of files) {
       console.log("PDF selected", file.name, file.size)
       try {
+        const fileId = `${file.name}::${file.size}::${file.lastModified}`
+        await putPdf({
+          fileId,
+          name: file.name,
+          blob: file,
+          size: file.size,
+          lastModified: file.lastModified,
+          createdAt: Date.now(),
+        })
         const buffer = await file.arrayBuffer()
         const doc = await pdfjsLib.getDocument({ data: buffer }).promise
         const pageNumberFromName = parsePageNumberFromName(file.name)
@@ -252,6 +266,7 @@ export default function PdfTileDetectionPage() {
           pageCount: doc.numPages,
           selectedPage: pageNumberFromName ?? 1,
           pages: {},
+          fileId,
         })
       } catch {
         toast.error(`Failed to load PDF: ${file.name}`)
@@ -280,6 +295,13 @@ export default function PdfTileDetectionPage() {
   }
 
   async function renderPage(targetPage?: number) {
+    try {
+      renderTaskRef.current?.cancel()
+    } catch {
+      // ignore cancel errors
+    }
+    renderTaskRef.current = null
+    const token = ++renderTokenRef.current
     const pdf = pdfRef.current
     const canvas = pdfCanvasRef.current
     if (!pdf || !canvas) {
@@ -310,7 +332,10 @@ export default function PdfTileDetectionPage() {
       throw new Error("Canvas 2D context not available")
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    await page.render({ canvasContext: ctx, viewport, canvas }).promise
+    const task = page.render({ canvasContext: ctx, viewport, canvas })
+    renderTaskRef.current = task
+    await task.promise
+    if (token !== renderTokenRef.current) return
     viewportRef.current = viewport
     if (Array.isArray(page.view)) {
       const [x1, y1, x2, y2] = page.view
@@ -765,8 +790,14 @@ export default function PdfTileDetectionPage() {
       setCurrentOrderCounter(1)
       setOrderingMode(false)
       setOrderingFinished(false)
-    } catch {
-      toast.error("Failed to render page.")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ""
+      const isCancelled =
+        message.toLowerCase().includes("cancel") ||
+        (error as { name?: string }).name === "RenderingCancelledException"
+      if (!isCancelled) {
+        toast.error("Failed to render page.")
+      }
     } finally {
       setRendering(false)
     }
@@ -900,7 +931,7 @@ export default function PdfTileDetectionPage() {
     console.log("Committed detected tiles", committed)
   }
 
-  function clearPdfState() {
+  async function clearPdfState() {
     setPdfs([])
     setSelectedPdfId(null)
     pdfRef.current = null
@@ -918,6 +949,7 @@ export default function PdfTileDetectionPage() {
     setPageRendered(false)
     setPdfStatus("")
     localStorage.removeItem(STORAGE_KEY)
+    await clearPdfStore()
     const canvas = pdfCanvasRef.current
     if (canvas) {
       const ctx = canvas.getContext("2d")
@@ -946,8 +978,14 @@ export default function PdfTileDetectionPage() {
       const safePage = Math.min(Math.max(entry.selectedPage, 1), doc.numPages)
       await renderPage(safePage)
       drawOverlay(entry.pages[safePage]?.boxes ?? [])
-    } catch {
-      toast.error("Failed to render page.")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ""
+      const isCancelled =
+        message.toLowerCase().includes("cancel") ||
+        (error as { name?: string }).name === "RenderingCancelledException"
+      if (!isCancelled) {
+        toast.error("Failed to render page.")
+      }
     }
   }
 
@@ -1007,15 +1045,62 @@ export default function PdfTileDetectionPage() {
   ])
 
   useEffect(() => {
-    const toPersist = pdfs.map(({ id, name, pageCount, selectedPage, pages }) => ({
+    const toPersist = pdfs.map(({ id, name, pageCount, selectedPage, pages, fileId }) => ({
       id,
       name,
       pageCount,
       selectedPage,
       pages,
+      fileId,
     }))
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toPersist))
   }, [pdfs])
+
+  useEffect(() => {
+    let cancelled = false
+    async function hydratePdfs() {
+      const updates: PdfEntry[] = []
+      for (const entry of pdfs) {
+        if (pdfDocMapRef.current.has(entry.id)) continue
+        if (!entry.fileId) {
+          updates.push({ ...entry, missing: true })
+          continue
+        }
+        try {
+          const stored = await getPdf(entry.fileId)
+          if (!stored) {
+            updates.push({ ...entry, missing: true })
+            continue
+          }
+          const buffer = await stored.blob.arrayBuffer()
+          const doc = await pdfjsLib.getDocument({ data: buffer }).promise
+          pdfDocMapRef.current.set(entry.id, doc)
+          updates.push({ ...entry, missing: false })
+          if (!selectedPdfId || selectedPdfId === entry.id) {
+            await handleSelectPdf({ ...entry, missing: false })
+          }
+        } catch {
+          updates.push({ ...entry, missing: true })
+        }
+      }
+      if (cancelled || updates.length === 0) return
+      setPdfs((prev) => {
+        let changed = false
+        const next = prev.map((entry) => {
+          const update = updates.find((u) => u.id === entry.id)
+          if (!update) return entry
+          if (entry.missing === update.missing) return entry
+          changed = true
+          return update
+        })
+        return changed ? next : prev
+      })
+    }
+    void hydratePdfs()
+    return () => {
+      cancelled = true
+    }
+  }, [pdfs, selectedPdfId])
 
   const selectedPdfEntry = useMemo(
     () => pdfs.find((entry) => entry.id === selectedPdfId) ?? null,
@@ -1151,6 +1236,7 @@ export default function PdfTileDetectionPage() {
                           <div className="text-muted-foreground">
                             {entry.pageCount} pages   Page {entry.selectedPage}  {" "}
                             {statusLabel}
+                            {entry.missing ? " • Missing file" : ""}
                           </div>
                         </div>
                       )

@@ -33,8 +33,9 @@ import {
   updateTile,
 } from "@/tools/catalogue-builder/catalogueProjectsStorage"
 import { clearImagesForProject, getImage, putImage } from "@/tools/catalogue-builder/imageStore"
-import { deleteAssetsForProject, putAsset } from "@/lib/assetStore"
+import { deleteAssetsForProject, getAsset, putAsset } from "@/lib/assetStore"
 import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
+import { extractTextFromRect, loadPdfDocument, type PdfRect } from "@/tools/catalogue-builder/pdfTextExtract"
  
 import type {
   CatalogueProject,
@@ -48,6 +49,24 @@ import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 const MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
 const PDF_DETECTION_STORAGE_KEY = "sca_pdf_tile_project_v1"
 const MAX_PLUS_FIELDS = 20
+const MAX_EXTRACTED_PLUS = 20
+const MAX_RANGE_EXPANSION = 500
+
+type PdfExportBox = PdfRect & {
+  include?: boolean
+  orderIndex?: number
+}
+
+type PdfExportPage = {
+  pageNumber: number
+  boxes: PdfExportBox[]
+}
+
+type PdfExportEntry = {
+  pdfId: string
+  name?: string
+  pages: PdfExportPage[]
+}
 
 function sanitizeTileId(value: string) {
   const trimmed = value.trim()
@@ -62,6 +81,78 @@ function stripExtension(filename: string) {
   return filename.replace(/\.[^/.]+$/, "")
 }
 
+function parseTileMapping(fileName: string) {
+  const pageMatch = fileName.match(/-p(\d{2})-/i)
+  const boxMatch = fileName.match(/-box(\d{2})-/i)
+  if (!pageMatch || !boxMatch) return null
+  return {
+    pageNumber: Number(pageMatch[1]),
+    boxOrder: Number(boxMatch[1]),
+  }
+}
+
+function isDisallowedContext(text: string, startIndex: number, endIndex: number) {
+  const before = text[startIndex - 1]
+  const after = text[endIndex]
+  const snippetStart = Math.max(0, startIndex - 2)
+  const snippetEnd = Math.min(text.length, endIndex + 2)
+  const snippet = text.slice(snippetStart, snippetEnd)
+  if (snippet.includes("%")) return true
+  if (before === "." || after === ".") return true
+  if (before === "$") return true
+  return false
+}
+
+function expandRange(startStr: string, endStr: string) {
+  const start = Number(startStr)
+  let end: number
+  if (!Number.isFinite(start)) return []
+  if (endStr.length < startStr.length) {
+    const prefix = startStr.slice(0, startStr.length - endStr.length)
+    end = Number(prefix + endStr)
+  } else {
+    end = Number(endStr)
+  }
+  if (!Number.isFinite(end) || end < start) return []
+  const values: string[] = []
+  for (let i = start; i <= end && values.length < MAX_RANGE_EXPANSION; i += 1) {
+    values.push(String(i))
+  }
+  return values
+}
+
+function extractPlusFromPdfText(text: string) {
+  const results: string[] = []
+  const seen = new Set<string>()
+
+  function addCandidate(value: string) {
+    if (value.length < 4 || value.length > 8) return
+    if (seen.has(value)) return
+    seen.add(value)
+    results.push(value)
+  }
+
+  const rangeRegex = /(\d{4,8})\s*-\s*(\d{1,8})/g
+  for (const match of text.matchAll(rangeRegex)) {
+    if (match.index === undefined) continue
+    const raw = match[0]
+    if (raw.includes(".") || isDisallowedContext(text, match.index, match.index + raw.length)) {
+      continue
+    }
+    const expanded = expandRange(match[1], match[2])
+    expanded.forEach(addCandidate)
+  }
+
+  const singleRegex = /\b\d{4,8}\b/g
+  for (const match of text.matchAll(singleRegex)) {
+    if (match.index === undefined) continue
+    if (isDisallowedContext(text, match.index, match.index + match[0].length)) continue
+    addCandidate(match[0])
+  }
+
+  return results
+}
+
 function createEmptyLinkBuilderState(): LinkBuilderState {
   return {
     category: null,
@@ -69,6 +160,10 @@ function createEmptyLinkBuilderState(): LinkBuilderState {
     extension: "",
     plus: Array.from({ length: MAX_PLUS_FIELDS }, () => ""),
   }
+}
+
+function createEmptyExtractedFlags() {
+  return Array.from({ length: MAX_PLUS_FIELDS }, () => false)
 }
 
 async function deleteImagesForProject(projectId: string) {
@@ -106,9 +201,13 @@ export default function CatalogueBuilderPage() {
     createEmptyLinkBuilderState()
   )
   const [draftLinkOutput, setDraftLinkOutput] = useState("")
+  const [draftExtractedFlags, setDraftExtractedFlags] = useState<boolean[]>(() =>
+    createEmptyExtractedFlags()
+  )
   const [tileThumbUrls, setTileThumbUrls] = useState<Record<string, string>>({})
   const tileThumbUrlsRef = useRef<Record<string, string>>({})
   const [selectedColorUrl, setSelectedColorUrl] = useState<string | null>(null)
+  const [pdfExtractRunning, setPdfExtractRunning] = useState(false)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
@@ -351,6 +450,7 @@ export default function CatalogueBuilderPage() {
       setDraftNotes("")
       setDraftLinkState(createEmptyLinkBuilderState())
       setDraftLinkOutput("")
+      setDraftExtractedFlags(createEmptyExtractedFlags())
       return
     }
     setDraftTitle(selectedTile.title ?? "")
@@ -358,6 +458,7 @@ export default function CatalogueBuilderPage() {
     setDraftNotes(selectedTile.notes ?? "")
     setDraftLinkState(selectedTile.linkBuilderState ?? createEmptyLinkBuilderState())
     setDraftLinkOutput(selectedTile.dynamicLink ?? "")
+    setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
   }, [selectedTile])
 
   useEffect(() => {
@@ -449,6 +550,7 @@ export default function CatalogueBuilderPage() {
           notes: undefined,
           dynamicLink: undefined,
           linkBuilderState: createEmptyLinkBuilderState(),
+          extractedPluFlags: createEmptyExtractedFlags(),
           imageKey: colorKey,
           originalFileName: file.name,
         })
@@ -545,6 +647,7 @@ export default function CatalogueBuilderPage() {
       notes: draftNotes.trim() || undefined,
       dynamicLink: draftLinkOutput.trim() || undefined,
       linkBuilderState: draftLinkState,
+      extractedPluFlags: draftExtractedFlags,
     })
     upsertProject(updated)
   }
@@ -578,6 +681,116 @@ export default function CatalogueBuilderPage() {
     setSelectedTileId(null)
   }
 
+  async function extractPlusFromPdf() {
+    if (!project || pdfExtractRunning) return
+    if (project.pdfAssetIds.length === 0) {
+      toast.error("No PDFs uploaded for this project.")
+      return
+    }
+    const exportMap = project.pdfDetection?.export as PdfExportEntry[] | undefined
+    if (!exportMap || exportMap.length === 0) {
+      toast.error("No PDF detection export found.")
+      return
+    }
+
+    setPdfExtractRunning(true)
+    let processedTiles = 0
+    let tilesWithPlus = 0
+    let totalPlus = 0
+    let missingMappings = 0
+
+    try {
+      const pdfAssetId = project.pdfAssetIds[0]
+      if (project.pdfAssetIds.length > 1 && import.meta.env.DEV) {
+        console.log("[pdf-extract] TODO: handle multiple PDFs, using first for now.")
+      }
+      const asset = await getAsset(pdfAssetId)
+      if (!asset) {
+        toast.error("PDF asset missing from local storage.")
+        return
+      }
+      const doc = await loadPdfDocument(asset.blob)
+      const pageCache = new Map<number, Awaited<ReturnType<typeof doc.getPage>>>()
+
+      const pdfEntry = exportMap[0]
+      const resolvedTiles: Tile[] = []
+      for (const tile of project.tiles) {
+        const fileName = tile.originalFileName ?? tile.id
+        const mapping = parseTileMapping(fileName)
+        if (!mapping) {
+          missingMappings += 1
+          resolvedTiles.push(tile)
+          continue
+        }
+        const pageEntry = pdfEntry.pages.find(
+          (page) => page.pageNumber === mapping.pageNumber
+        )
+        if (!pageEntry) {
+          missingMappings += 1
+          resolvedTiles.push(tile)
+          continue
+        }
+        const box = pageEntry.boxes.find((item, index) => {
+          const order = typeof item.orderIndex === "number" ? item.orderIndex : index + 1
+          return order === mapping.boxOrder
+        })
+        if (!box) {
+          missingMappings += 1
+          resolvedTiles.push(tile)
+          continue
+        }
+        processedTiles += 1
+        const rect = {
+          xPdf: box.xPdf,
+          yPdf: box.yPdf,
+          wPdf: box.wPdf,
+          hPdf: box.hPdf,
+        }
+        let page = pageCache.get(mapping.pageNumber)
+        if (!page) {
+          page = await doc.getPage(mapping.pageNumber)
+          pageCache.set(mapping.pageNumber, page)
+        }
+        const text = await extractTextFromRect(page, rect)
+        const plus = extractPlusFromPdfText(text)
+        if (plus.length > 0) {
+          const trimmed = plus.slice(0, MAX_EXTRACTED_PLUS)
+          const baseState = tile.linkBuilderState ?? createEmptyLinkBuilderState()
+          const nextFlags = createEmptyExtractedFlags()
+          trimmed.forEach((_, index) => {
+            if (index < nextFlags.length) nextFlags[index] = true
+          })
+          resolvedTiles.push({
+            ...tile,
+            linkBuilderState: {
+              ...baseState,
+              plus: baseState.plus.map((_, index) => trimmed[index] ?? ""),
+            },
+            extractedPluFlags: nextFlags,
+          })
+          tilesWithPlus += 1
+          totalPlus += trimmed.length
+        } else {
+          resolvedTiles.push(tile)
+        }
+      }
+
+      const updated: CatalogueProject = {
+        ...project,
+        tiles: resolvedTiles,
+        updatedAt: new Date().toISOString(),
+      }
+      upsertProject(updated)
+      toast.success(
+        `${processedTiles} tiles processed, ${tilesWithPlus} with PLUs, ${totalPlus} PLUs filled, ${missingMappings} missing mappings.`
+      )
+    } catch (error) {
+      toast.error("PDF extraction failed. Check the PDF asset and detection map.")
+    } finally {
+      setPdfExtractRunning(false)
+    }
+  }
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const isCmdOrCtrl = event.metaKey || event.ctrlKey
@@ -608,6 +821,7 @@ export default function CatalogueBuilderPage() {
     draftNotes,
     draftLinkOutput,
     draftLinkState,
+    draftExtractedFlags,
     tiles,
   ])
 
@@ -758,6 +972,14 @@ export default function CatalogueBuilderPage() {
             </div>
             {project.tiles.length > 0 ? (
               <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={extractPlusFromPdf}
+                  disabled={pdfExtractRunning}
+                >
+                  Extract PLUs from PDF
+                </Button>
                 <Button type="button" variant="outline" onClick={confirmReplaceAll}>
                   Replace All Images
                 </Button>
@@ -892,6 +1114,8 @@ export default function CatalogueBuilderPage() {
                           initialState={draftLinkState}
                           onChange={setDraftLinkState}
                           onOutputChange={setDraftLinkOutput}
+                          extractedPluFlags={draftExtractedFlags}
+                          onExtractedPluFlagsChange={setDraftExtractedFlags}
                         />
                       </div>
                     <div className="space-y-2">

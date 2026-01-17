@@ -13,6 +13,7 @@ export type Tile = {
   status: TileStatus
   dynamicLink?: string
   notes?: string
+  extractedPluFlags?: boolean[]
   originalFileName?: string
   linkBuilderState?: LinkBuilderState
   imageKey?: string

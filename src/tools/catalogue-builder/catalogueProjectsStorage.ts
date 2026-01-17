@@ -40,6 +40,10 @@ function normalizeProject(value: unknown): CatalogueProject | null {
     : Array.isArray(project.pdfIds)
       ? project.pdfIds
       : []
+  const tileMatches =
+    project.tileMatches && typeof project.tileMatches === "object"
+      ? project.tileMatches
+      : {}
 
   return {
     id: project.id,
@@ -58,6 +62,7 @@ function normalizeProject(value: unknown): CatalogueProject | null {
       project.pdfDetection && typeof project.pdfDetection === "object"
         ? project.pdfDetection
         : {},
+    tileMatches,
     tiles: project.tiles,
   }
 }
@@ -98,6 +103,7 @@ export function createProject(name: string, region: Region): CatalogueProject {
     pdfAssetIds: [],
     detectionMaps: {},
     pdfDetection: {},
+    tileMatches: {},
     tiles: [],
   }
 }

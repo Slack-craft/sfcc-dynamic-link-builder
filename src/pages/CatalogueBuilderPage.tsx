@@ -5,6 +5,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
+import { Badge } from "@/components/ui/badge"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { Info } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -52,20 +60,27 @@ const MAX_PLUS_FIELDS = 20
 const MAX_EXTRACTED_PLUS = 20
 const MAX_RANGE_EXPANSION = 500
 
+type PdfDoc = Awaited<ReturnType<typeof loadPdfDocument>>
+type PdfPage = Awaited<ReturnType<PdfDoc["getPage"]>>
+
 type PdfExportBox = PdfRect & {
+  rectId?: string
   include?: boolean
   orderIndex?: number
 }
 
 type PdfExportPage = {
   pageNumber: number
+  pageWidth?: number
+  pageHeight?: number
   boxes: PdfExportBox[]
 }
 
 type PdfExportEntry = {
   pdfId: string
-  name?: string
-  pages: PdfExportPage[]
+  filename?: string
+  spreadNumber?: number
+  pages: Record<string, PdfExportPage> | PdfExportPage[]
 }
 
 function sanitizeTileId(value: string) {
@@ -82,13 +97,71 @@ function stripExtension(filename: string) {
 }
 
 function parseTileMapping(fileName: string) {
-  const pageMatch = fileName.match(/-p(\d{2})-/i)
+  const pageMatch = fileName.match(/-p(\d{1,2})-/i)
   const boxMatch = fileName.match(/-box(\d{2})-/i)
   if (!pageMatch || !boxMatch) return null
+  const imgPage = Number(pageMatch[1])
+  const boxOrder = Number(boxMatch[1])
+  if (!Number.isFinite(imgPage) || !Number.isFinite(boxOrder)) return null
+  const half = imgPage % 2 === 1 ? "left" : "right"
+  const spreadIndex = Math.ceil(imgPage / 2)
   return {
-    pageNumber: Number(pageMatch[1]),
-    boxOrder: Number(boxMatch[1]),
+    imgPage,
+    half,
+    spreadIndex,
+    boxOrder,
   }
+}
+
+function formatMappingInfo(fileName: string) {
+  const mapping = parseTileMapping(fileName)
+  if (!mapping) return "p?? box??"
+  const pageLabel = String(mapping.imgPage).padStart(2, "0")
+  const boxLabel = String(mapping.boxOrder).padStart(2, "0")
+  return `p${pageLabel} box${boxLabel}`
+}
+
+function getExportSpreadOrder(entries: PdfExportEntry[]) {
+  const withParsed = entries.map((entry, index) => {
+    const match = entry.filename?.match(/P(\d{1,2})/i)
+    const order = match ? Number(match[1]) : Number.NaN
+    return { entry, index, order }
+  })
+  if (withParsed.some((item) => Number.isFinite(item.order))) {
+    return withParsed
+      .sort((a, b) => {
+        const aValid = Number.isFinite(a.order)
+        const bValid = Number.isFinite(b.order)
+        if (aValid && bValid) return (a.order as number) - (b.order as number)
+        if (aValid) return -1
+        if (bValid) return 1
+        return a.index - b.index
+      })
+      .map((item) => item.entry)
+  }
+  return entries
+}
+
+function getFirstPageExport(entry: PdfExportEntry) {
+  if (Array.isArray(entry.pages)) {
+    return entry.pages[0]
+  }
+  const keys = Object.keys(entry.pages)
+  const firstKey = keys[0]
+  return firstKey ? entry.pages[firstKey] : undefined
+}
+
+function findRectById(entries: PdfExportEntry[], rectId: string) {
+  for (const entry of entries) {
+    const pages = Array.isArray(entry.pages) ? entry.pages : Object.values(entry.pages)
+    for (const page of pages) {
+      const box = page.boxes.find((item) => item.rectId === rectId)
+      if (box) {
+        return { entry, page, box }
+      }
+    }
+  }
+  return null
 }
 
 function isDisallowedContext(text: string, startIndex: number, endIndex: number) {
@@ -208,6 +281,8 @@ export default function CatalogueBuilderPage() {
   const tileThumbUrlsRef = useRef<Record<string, string>>({})
   const [selectedColorUrl, setSelectedColorUrl] = useState<string | null>(null)
   const [pdfExtractRunning, setPdfExtractRunning] = useState(false)
+  const [showMissingOnly, setShowMissingOnly] = useState(false)
+  const [pdfAssetNames, setPdfAssetNames] = useState<Record<string, string>>({})
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
@@ -225,6 +300,28 @@ export default function CatalogueBuilderPage() {
     if (!project || project.stage !== "pdf-detect") return
     writePdfDetectionToStorage(project.pdfDetection ?? {})
   }, [project?.id, project?.stage, project?.pdfDetection])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadPdfNames() {
+      if (!project) {
+        setPdfAssetNames({})
+        return
+      }
+      const entries = await Promise.all(
+        project.pdfAssetIds.map(async (assetId) => {
+          const asset = await getAsset(assetId)
+          return [assetId, asset?.name ?? "Unknown PDF"] as const
+        })
+      )
+      if (cancelled) return
+      setPdfAssetNames(Object.fromEntries(entries))
+    }
+    void loadPdfNames()
+    return () => {
+      cancelled = true
+    }
+  }, [project?.id, project?.pdfAssetIds])
 
   const projectBar = (
     <div className="flex flex-wrap items-center gap-2">
@@ -372,6 +469,46 @@ export default function CatalogueBuilderPage() {
   }
 
   const tiles = project?.tiles ?? []
+  const missingTilesCount = tiles.filter(
+    (tile) => tile.pdfMappingStatus === "missing"
+  ).length
+  const displayTiles = showMissingOnly
+    ? tiles.filter((tile) => tile.pdfMappingStatus === "missing")
+    : tiles
+  const detectionSummary = useMemo(() => {
+    if (!project) return []
+    const detectionState = project.pdfDetection as {
+      byPdfAssetId?: Record<string, PdfExportEntry>
+      export?: PdfExportEntry[]
+    }
+    const exportEntries = getExportSpreadOrder(detectionState.export ?? [])
+    return exportEntries.map((entry, index) => {
+      const assetId = entry.pdfId
+      const pages = entry?.pages ?? {}
+      const boxes = Array.isArray(pages)
+        ? pages.flatMap((page) => page.boxes ?? [])
+        : Object.values(pages).flatMap((page) => page.boxes ?? [])
+      const included = boxes.filter((box) => box.include ?? true)
+      const ordered = included.filter((box) => Number.isFinite(box.orderIndex))
+      const hasSize = Array.isArray(pages)
+        ? pages.some(
+            (page) => Number.isFinite(page.pageWidth) && Number.isFinite(page.pageHeight)
+          )
+        : Object.values(pages).some(
+            (page) => Number.isFinite(page.pageWidth) && Number.isFinite(page.pageHeight)
+          )
+      return {
+        assetId,
+        name: pdfAssetNames[assetId] ?? entry?.filename ?? `PDF ${index + 1}`,
+        exportPresent: Boolean(entry),
+        totalCount: boxes.length,
+        includedCount: included.length,
+        orderedCount: ordered.length,
+        hasSize,
+        spreadNumber: entry?.spreadNumber,
+      }
+    })
+  }, [project, pdfAssetNames])
   const selectedTile = useMemo(
     () => tiles.find((tile) => tile.id === selectedTileId) ?? null,
     [tiles, selectedTileId]
@@ -391,6 +528,24 @@ export default function CatalogueBuilderPage() {
       nextProject.pdfDetection = readPdfDetectionFromStorage()
     }
     upsertProject(nextProject)
+  }
+
+  function downloadDetectionExport() {
+    if (!project) return
+    const payload = {
+      projectId: project.id,
+      projectName: project.name,
+      pdfDetection: project.pdfDetection ?? {},
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `${project.name || "catalogue"}-pdf-detection.json`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
   }
 
   useEffect(() => {
@@ -687,8 +842,13 @@ export default function CatalogueBuilderPage() {
       toast.error("No PDFs uploaded for this project.")
       return
     }
-    const exportMap = project.pdfDetection?.export as PdfExportEntry[] | undefined
-    if (!exportMap || exportMap.length === 0) {
+      const detectionState = project.pdfDetection as {
+        byPdfAssetId?: Record<string, PdfExportEntry>
+        export?: PdfExportEntry[]
+      }
+      const exportById = detectionState?.byPdfAssetId
+      const exportMap = detectionState?.export
+    if ((!exportById || Object.keys(exportById).length === 0) && (!exportMap || exportMap.length === 0)) {
       toast.error("No PDF detection export found.")
       return
     }
@@ -698,45 +858,272 @@ export default function CatalogueBuilderPage() {
     let tilesWithPlus = 0
     let totalPlus = 0
     let missingMappings = 0
+    let missingNoExport = 0
+    let missingNoRect = 0
+    let missingNoMatch = 0
+    let spreadsFound = 0
+    let missingLogCount = 0
 
     try {
-      const pdfAssetId = project.pdfAssetIds[0]
-      if (project.pdfAssetIds.length > 1 && import.meta.env.DEV) {
-        console.log("[pdf-extract] TODO: handle multiple PDFs, using first for now.")
-      }
-      const asset = await getAsset(pdfAssetId)
-      if (!asset) {
-        toast.error("PDF asset missing from local storage.")
-        return
-      }
-      const doc = await loadPdfDocument(asset.blob)
-      const pageCache = new Map<number, Awaited<ReturnType<typeof doc.getPage>>>()
-
-      const pdfEntry = exportMap[0]
+      const docCache = new Map<string, PdfDoc>()
+      const pageCache = new Map<string, Map<number, PdfPage>>()
+      const exportEntries = getExportSpreadOrder(exportMap ?? [])
+      spreadsFound = exportEntries.length
+      const rectIdByImageId = new Map<string, string>()
+      Object.entries(project.tileMatches ?? {}).forEach(([rectId, imageId]) => {
+        rectIdByImageId.set(imageId, rectId)
+      })
       const resolvedTiles: Tile[] = []
       for (const tile of project.tiles) {
         const fileName = tile.originalFileName ?? tile.id
+        const matchedRectId = tile.imageKey
+          ? rectIdByImageId.get(tile.imageKey)
+          : undefined
+        if (matchedRectId) {
+          const matched = findRectById(exportEntries, matchedRectId)
+          if (!matched) {
+            missingMappings += 1
+            missingNoMatch += 1
+            resolvedTiles.push({
+              ...tile,
+              pdfMappingStatus: "missing",
+              pdfMappingReason: "Matched rect not found in export",
+            })
+            continue
+          }
+
+          const { entry: pdfEntry, page: pageEntry, box } = matched
+          const pdfAssetId = pdfEntry.pdfId
+          let doc = docCache.get(pdfAssetId)
+          if (!doc) {
+            const asset = await getAsset(pdfAssetId)
+            if (!asset) {
+              missingMappings += 1
+              resolvedTiles.push({
+                ...tile,
+                pdfMappingStatus: "missing",
+                pdfMappingReason: "PDF asset missing",
+              })
+              continue
+            }
+            doc = await loadPdfDocument(asset.blob)
+            docCache.set(pdfAssetId, doc)
+          }
+
+          let perDocPageCache = pageCache.get(pdfAssetId)
+          if (!perDocPageCache) {
+            perDocPageCache = new Map()
+            pageCache.set(pdfAssetId, perDocPageCache)
+          }
+          const pageNumber = pageEntry.pageNumber ?? 1
+          let page = perDocPageCache.get(pageNumber)
+          if (!page) {
+            page = await doc.getPage(pageNumber)
+            perDocPageCache.set(pageNumber, page)
+          }
+
+          processedTiles += 1
+          const rect = {
+            xPdf: box.xPdf,
+            yPdf: box.yPdf,
+            wPdf: box.wPdf,
+            hPdf: box.hPdf,
+          }
+          const text = await extractTextFromRect(page, rect)
+          const plus = extractPlusFromPdfText(text)
+          const pageWidth = pageEntry.pageWidth ?? page.getViewport({ scale: 1 }).width
+          const mappedHalf =
+            box.xPdf + box.wPdf / 2 < pageWidth / 2 ? "left" : "right"
+          if (plus.length > 0) {
+            const trimmed = plus.slice(0, MAX_EXTRACTED_PLUS)
+            const baseState = tile.linkBuilderState ?? createEmptyLinkBuilderState()
+            const nextFlags = createEmptyExtractedFlags()
+            trimmed.forEach((_, index) => {
+              if (index < nextFlags.length) nextFlags[index] = true
+            })
+            resolvedTiles.push({
+              ...tile,
+              linkBuilderState: {
+                ...baseState,
+                plus: baseState.plus.map((_, index) => trimmed[index] ?? ""),
+              },
+              extractedPluFlags: nextFlags,
+              pdfMappingStatus: undefined,
+              pdfMappingReason: undefined,
+              mappedPdfFilename: pdfEntry.filename ?? pdfAssetNames[pdfAssetId],
+              mappedSpreadNumber: pdfEntry.spreadNumber,
+              mappedHalf,
+              mappedBoxIndex: box.orderIndex,
+            })
+            tilesWithPlus += 1
+            totalPlus += trimmed.length
+          } else {
+            resolvedTiles.push({
+              ...tile,
+              pdfMappingStatus: undefined,
+              pdfMappingReason: undefined,
+              mappedPdfFilename: pdfEntry.filename ?? pdfAssetNames[pdfAssetId],
+              mappedSpreadNumber: pdfEntry.spreadNumber,
+              mappedHalf,
+              mappedBoxIndex: box.orderIndex,
+            })
+          }
+          continue
+        }
         const mapping = parseTileMapping(fileName)
         if (!mapping) {
           missingMappings += 1
-          resolvedTiles.push(tile)
+          const missingTile = {
+            ...tile,
+            pdfMappingStatus: "missing",
+            pdfMappingReason: "Missing page/box mapping",
+          }
+          if (import.meta.env.DEV && missingLogCount < 20) {
+            console.log("[pdf-extract] missing mapping", {
+              fileName,
+              reason: "no page/box match",
+            })
+            missingLogCount += 1
+          }
+          resolvedTiles.push(missingTile)
           continue
         }
-        const pageEntry = pdfEntry.pages.find(
-          (page) => page.pageNumber === mapping.pageNumber
+        const pdfEntry = exportEntries.find(
+          (entry) => entry.spreadNumber === mapping.spreadIndex
         )
+        if (!pdfEntry) {
+          missingMappings += 1
+          missingNoExport += 1
+          const missingTile = {
+            ...tile,
+            pdfMappingStatus: "missing",
+            pdfMappingReason: `No pdf export for spreadIndex ${mapping.spreadIndex}`,
+          }
+          if (import.meta.env.DEV && missingLogCount < 20) {
+            console.log("[pdf-extract] missing mapping", {
+              fileName,
+              imgPage: mapping.imgPage,
+              spreadIndex: mapping.spreadIndex,
+              half: mapping.half,
+              boxOrder: mapping.boxOrder,
+              exportFound: false,
+            })
+            missingLogCount += 1
+          }
+          resolvedTiles.push(missingTile)
+          continue
+        }
+        const pdfAssetId = pdfEntry.pdfId
+
+        let doc = docCache.get(pdfAssetId)
+        if (!doc) {
+          const asset = await getAsset(pdfAssetId)
+          if (!asset) {
+            missingMappings += 1
+            const missingTile = {
+              ...tile,
+              pdfMappingStatus: "missing",
+              pdfMappingReason: "PDF asset missing",
+            }
+            if (import.meta.env.DEV && missingLogCount < 20) {
+              console.log("[pdf-extract] missing mapping", {
+                fileName,
+                imgPage: mapping.imgPage,
+                spreadIndex: mapping.spreadIndex,
+                half: mapping.half,
+                boxOrder: mapping.boxOrder,
+                pdfAssetIdFound: true,
+                exportFound: true,
+                assetFound: false,
+              })
+              missingLogCount += 1
+            }
+            resolvedTiles.push(missingTile)
+            continue
+          }
+          doc = await loadPdfDocument(asset.blob)
+          docCache.set(pdfAssetId, doc)
+        }
+
+        let perDocPageCache = pageCache.get(pdfAssetId)
+        if (!perDocPageCache) {
+          perDocPageCache = new Map()
+          pageCache.set(pdfAssetId, perDocPageCache)
+        }
+        let page = perDocPageCache.get(1)
+        if (!page) {
+          page = await doc.getPage(1)
+          perDocPageCache.set(1, page)
+        }
+
+        const pageEntry = getFirstPageExport(pdfEntry)
         if (!pageEntry) {
           missingMappings += 1
-          resolvedTiles.push(tile)
+          missingNoRect += 1
+          const missingTile = {
+            ...tile,
+            pdfMappingStatus: "missing",
+            pdfMappingReason: "No rects for export page",
+          }
+          if (import.meta.env.DEV && missingLogCount < 20) {
+            console.log("[pdf-extract] missing mapping", {
+              fileName,
+              imgPage: mapping.imgPage,
+              spreadIndex: mapping.spreadIndex,
+              half: mapping.half,
+              boxOrder: mapping.boxOrder,
+              pdfAssetIdFound: true,
+              exportFound: true,
+              pageFound: false,
+            })
+            missingLogCount += 1
+          }
+          resolvedTiles.push(missingTile)
           continue
         }
-        const box = pageEntry.boxes.find((item, index) => {
-          const order = typeof item.orderIndex === "number" ? item.orderIndex : index + 1
-          return order === mapping.boxOrder
-        })
+
+        const pageWidth = page.getViewport({ scale: 1 }).width
+        const withOrder = pageEntry.boxes.filter(
+          (item) => (item.include ?? true) && Number.isFinite(item.orderIndex)
+        )
+        const leftBucket = withOrder
+          .filter((item) => item.xPdf + item.wPdf / 2 < pageWidth / 2)
+          .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+        const rightBucket = withOrder
+          .filter((item) => item.xPdf + item.wPdf / 2 >= pageWidth / 2)
+          .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+        const bucket = mapping.half === "left" ? leftBucket : rightBucket
+        const box = bucket[mapping.boxOrder - 1]
         if (!box) {
           missingMappings += 1
-          resolvedTiles.push(tile)
+          missingNoRect += 1
+          const missingTile = {
+            ...tile,
+            pdfMappingStatus: "missing",
+            pdfMappingReason: `No rect for box (L:${leftBucket.length} R:${rightBucket.length})`,
+          }
+          if (import.meta.env.DEV && missingLogCount < 20) {
+            const orderIndices = bucket.map((item) => item.orderIndex ?? 0)
+            const minOrder =
+              orderIndices.length > 0 ? Math.min(...orderIndices) : null
+            const maxOrder =
+              orderIndices.length > 0 ? Math.max(...orderIndices) : null
+            console.log("[pdf-extract] missing mapping", {
+              fileName,
+              imgPage: mapping.imgPage,
+              spreadIndex: mapping.spreadIndex,
+              half: mapping.half,
+              boxOrder: mapping.boxOrder,
+              pdfAssetIdFound: true,
+              exportFound: true,
+              bucketSize: bucket.length,
+              leftBucketSize: leftBucket.length,
+              rightBucketSize: rightBucket.length,
+              orderRange: [minOrder, maxOrder],
+            })
+            missingLogCount += 1
+          }
+          resolvedTiles.push(missingTile)
           continue
         }
         processedTiles += 1
@@ -745,11 +1132,6 @@ export default function CatalogueBuilderPage() {
           yPdf: box.yPdf,
           wPdf: box.wPdf,
           hPdf: box.hPdf,
-        }
-        let page = pageCache.get(mapping.pageNumber)
-        if (!page) {
-          page = await doc.getPage(mapping.pageNumber)
-          pageCache.set(mapping.pageNumber, page)
         }
         const text = await extractTextFromRect(page, rect)
         const plus = extractPlusFromPdfText(text)
@@ -767,11 +1149,25 @@ export default function CatalogueBuilderPage() {
               plus: baseState.plus.map((_, index) => trimmed[index] ?? ""),
             },
             extractedPluFlags: nextFlags,
+            pdfMappingStatus: undefined,
+            pdfMappingReason: undefined,
+            mappedPdfFilename: pdfEntry.filename ?? pdfAssetNames[pdfAssetId],
+            mappedSpreadNumber: mapping.spreadIndex,
+            mappedHalf: mapping.half,
+            mappedBoxIndex: mapping.boxOrder,
           })
           tilesWithPlus += 1
           totalPlus += trimmed.length
         } else {
-          resolvedTiles.push(tile)
+          resolvedTiles.push({
+            ...tile,
+            pdfMappingStatus: undefined,
+            pdfMappingReason: undefined,
+            mappedPdfFilename: pdfEntry.filename ?? pdfAssetNames[pdfAssetId],
+            mappedSpreadNumber: mapping.spreadIndex,
+            mappedHalf: mapping.half,
+            mappedBoxIndex: mapping.boxOrder,
+          })
         }
       }
 
@@ -782,7 +1178,8 @@ export default function CatalogueBuilderPage() {
       }
       upsertProject(updated)
       toast.success(
-        `${processedTiles} tiles processed, ${tilesWithPlus} with PLUs, ${totalPlus} PLUs filled, ${missingMappings} missing mappings.`
+        `${processedTiles} tiles processed, ${tilesWithPlus} with PLUs, ${totalPlus} PLUs filled, ` +
+          `${missingMappings} missing mappings (spreads ${spreadsFound}, no export ${missingNoExport}, no rect ${missingNoRect}, no match ${missingNoMatch}).`
       )
     } catch (error) {
       toast.error("PDF extraction failed. Check the PDF asset and detection map.")
@@ -989,6 +1386,50 @@ export default function CatalogueBuilderPage() {
               </div>
             ) : null}
           </div>
+          <Card className="mt-4">
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle>Detection Export Summary</CardTitle>
+                <Button type="button" size="sm" variant="outline" onClick={downloadDetectionExport}>
+                  Download export JSON
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="text-muted-foreground">
+                Project: <span className="text-foreground">{project.name}</span> ({project.id})
+              </div>
+              <div className="text-muted-foreground">
+                PDFs: <span className="text-foreground">{project.pdfAssetIds.length}</span>
+              </div>
+              {detectionSummary.length === 0 ? (
+                <div className="text-xs text-muted-foreground">No export data available.</div>
+              ) : (
+                <div className="space-y-2">
+                  {detectionSummary.map((row, index) => {
+                    const hasWarning = !row.exportPresent || row.orderedCount === 0
+                    return (
+                      <div key={row.assetId} className="rounded-md border border-border p-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-medium">
+                            {index + 1}. {row.name}
+                          </div>
+                          {hasWarning ? (
+                            <Badge variant="destructive">Check export</Badge>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Export: {row.exportPresent ? "yes" : "no"} | Total: {row.totalCount} | Included:{" "}
+                          {row.includedCount} | Ordered: {row.orderedCount} | Page size:{" "}
+                          {row.hasSize ? "yes" : "no"} | Spread: {row.spreadNumber ?? "?"}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
           <Separator className="my-4" />
           {project.tiles.length === 0 ? (
             <div
@@ -1019,10 +1460,22 @@ export default function CatalogueBuilderPage() {
           ) : (
             <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
               <div className="space-y-2">
-                <div className="text-xs font-medium uppercase text-muted-foreground">Tiles</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-medium uppercase text-muted-foreground">Tiles</div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={missingTilesCount === 0}
+                    onClick={() => setShowMissingOnly((prev) => !prev)}
+                  >
+                    {showMissingOnly ? "Show all" : "Show missing only"}
+                  </Button>
+                </div>
                 <div className="space-y-2">
-                  {project.tiles.map((tile) => {
+                  {displayTiles.map((tile) => {
                     const isSelected = tile.id === selectedTileId
+                    const mappingInfo = formatMappingInfo(tile.originalFileName ?? tile.id)
                     return (
                       <button
                         key={tile.id}
@@ -1047,7 +1500,39 @@ export default function CatalogueBuilderPage() {
                             )}
                             <span className="font-medium">{tile.id}</span>
                           </div>
-                          <span className="text-xs uppercase text-muted-foreground">{tile.status}</span>
+                          <div className="flex items-center gap-2">
+                            {tile.pdfMappingStatus === "missing" ? (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="destructive" className="text-[10px] uppercase">
+                                      Missing
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {tile.pdfMappingReason ?? "Missing PDF mapping"} ({mappingInfo})
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            ) : null}
+                            {tile.mappedSpreadNumber ? (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border text-muted-foreground">
+                                      <Info className="h-3 w-3" />
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {`Spread ${tile.mappedSpreadNumber} • ${tile.mappedPdfFilename ?? "PDF"} • ${tile.mappedHalf ?? "?"} • box ${tile.mappedBoxIndex ?? "?"}`}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            ) : null}
+                            <span className="text-xs uppercase text-muted-foreground">
+                              {tile.status}
+                            </span>
+                          </div>
                         </div>
                         {tile.title ? (
                           <div className="mt-1 text-xs text-muted-foreground">

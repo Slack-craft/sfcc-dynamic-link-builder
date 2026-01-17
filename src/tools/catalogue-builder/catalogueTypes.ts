@@ -14,6 +14,12 @@ export type Tile = {
   dynamicLink?: string
   notes?: string
   extractedPluFlags?: boolean[]
+  pdfMappingStatus?: "missing"
+  pdfMappingReason?: string
+  mappedPdfFilename?: string
+  mappedSpreadNumber?: number
+  mappedHalf?: "left" | "right"
+  mappedBoxIndex?: number
   originalFileName?: string
   linkBuilderState?: LinkBuilderState
   imageKey?: string
@@ -42,5 +48,6 @@ export type CatalogueProject = {
   pdfAssetIds: string[]
   detectionMaps: DetectionMaps
   pdfDetection: PdfDetectionState
+  tileMatches: Record<string, string>
   tiles: Tile[]
 }

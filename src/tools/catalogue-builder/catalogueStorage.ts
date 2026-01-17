@@ -18,6 +18,7 @@ function isCatalogueProject(value: unknown): value is CatalogueProject {
     Array.isArray(project.pdfAssetIds) &&
     typeof project.detectionMaps === "object" &&
     typeof project.pdfDetection === "object" &&
+    typeof project.tileMatches === "object" &&
     Array.isArray(project.tiles)
   )
 }
@@ -50,6 +51,7 @@ export function newProject(name: string): CatalogueProject {
     pdfAssetIds: [],
     detectionMaps: {},
     pdfDetection: {},
+    tileMatches: {},
     tiles: [],
   }
 }

@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import {
   AlertDialog,
@@ -39,6 +40,10 @@ type PdfTileDetectionPageProps = {
   onProjectChange?: (project: CatalogueProject) => void
 }
 
+const isDev = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV ?? false
+
+const SHOW_EXPORT_SUMMARY = false
+
 export default function PdfTileDetectionPage({
   project: externalProject,
   onProjectChange,
@@ -61,6 +66,7 @@ export default function PdfTileDetectionPage({
   const [minAreaPercent, setMinAreaPercent] = useState(1)
   const [dilateIterations, setDilateIterations] = useState(2)
   type PdfBox = {
+    rectId: string
     pageNumber: number
     xPdf: number
     yPdf: number
@@ -75,6 +81,7 @@ export default function PdfTileDetectionPage({
     Record<number, { include: boolean; paddingOverride?: number; orderIndex?: number }>
   >({})
   const [orderingMode, setOrderingMode] = useState(false)
+  const [matchMode, setMatchMode] = useState(false)
   const [currentOrderCounter, setCurrentOrderCounter] = useState(1)
   const [overlayCursor, setOverlayCursor] = useState("default")
   const [detecting, setDetecting] = useState(false)
@@ -87,6 +94,10 @@ export default function PdfTileDetectionPage({
   const [orderingFinished, setOrderingFinished] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [viewportCssSize, setViewportCssSize] = useState({ width: 0, height: 0 })
+  const [showAllImages, setShowAllImages] = useState(false)
+  const [imageAssets, setImageAssets] = useState<
+    { assetId: string; name: string; url: string; spreadNumber: number | null }[]
+  >([])
 
   const pdfRef = useRef<PDFDocumentProxy | null>(null)
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -119,6 +130,8 @@ export default function PdfTileDetectionPage({
     orderingFinished?: boolean
     currentOrderCounter?: number
     rectPaddingPx?: number
+    pageWidth?: number
+    pageHeight?: number
   }
   type PdfEntry = {
     id: string
@@ -132,6 +145,8 @@ export default function PdfTileDetectionPage({
 
   const [pdfs, setPdfs] = useState<PdfEntry[]>([])
   const [selectedPdfId, setSelectedPdfId] = useState<string | null>(null)
+
+  const tileMatches = currentProject?.tileMatches ?? {}
 
   function updateActiveProject(updater: (project: CatalogueProject) => CatalogueProject) {
     if (externalProject && onProjectChange) {
@@ -214,6 +229,47 @@ export default function PdfTileDetectionPage({
     return Number.isFinite(value) && value > 0 ? value : null
   }
 
+  function parseImageSpreadNumber(fileName: string) {
+    const match = fileName.match(/-p(\d{1,2})-/i)
+    if (!match) return null
+    const imgPage = Number.parseInt(match[1], 10)
+    if (!Number.isFinite(imgPage) || imgPage <= 0) return null
+    return Math.ceil(imgPage / 2)
+  }
+
+  function createRectId() {
+    if (typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID()
+    }
+    return `rect-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  }
+
+  function ensureRectIds(source: PdfBox[]) {
+    let changed = false
+    const next = source.map((box) => {
+      if (box.rectId) return box
+      changed = true
+      return { ...box, rectId: createRectId() }
+    })
+    return changed ? next : source
+  }
+
+  function normalizePages(pages?: Record<number, PageData>) {
+    if (!pages) return {}
+    let changed = false
+    const next: Record<number, PageData> = {}
+    Object.entries(pages).forEach(([key, value]) => {
+      const rects = ensureRectIds(value.boxes ?? [])
+      if (rects !== value.boxes) {
+        changed = true
+        next[Number(key)] = { ...value, boxes: rects }
+      } else {
+        next[Number(key)] = value
+      }
+    })
+    return changed ? next : pages
+  }
+
   const orderedIncluded = useMemo(() => {
     const included = boxes
       .map((box, index) => ({
@@ -266,6 +322,44 @@ export default function PdfTileDetectionPage({
       order: order + 1,
     }))
   }, [boxes, rectConfigs])
+
+  useEffect(() => {
+    let cancelled = false
+    const urls: string[] = []
+    async function loadImages() {
+      if (!currentProject) {
+        setImageAssets([])
+        return
+      }
+      const allowed = new Set(currentProject.imageAssetIds ?? [])
+      if (allowed.size === 0) {
+        setImageAssets([])
+        return
+      }
+      const assets = await listAssets(currentProject.id, "image")
+      const entries = assets.filter((asset) => allowed.has(asset.assetId))
+      const next = entries.map((asset) => {
+        const url = URL.createObjectURL(asset.blob)
+        urls.push(url)
+        return {
+          assetId: asset.assetId,
+          name: asset.name,
+          url,
+          spreadNumber: parseImageSpreadNumber(asset.name),
+        }
+      })
+      if (!cancelled) {
+        setImageAssets(next)
+      } else {
+        urls.forEach((url) => URL.revokeObjectURL(url))
+      }
+    }
+    void loadImages()
+    return () => {
+      cancelled = true
+      urls.forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [currentProject?.id, currentProject?.imageAssetIds])
 
   const pageArea = useMemo(() => {
     const size = pageSizeRef.current
@@ -456,10 +550,16 @@ export default function PdfTileDetectionPage({
       const padding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
       const padded = getPaddedRect(box, padding)
       const order = rectConfigs[index]?.orderIndex
-      ctx.strokeStyle = order ? "#2563eb" : "#ef4444"
-      ctx.lineWidth = order ? 3 : 2
+      const isMatched = Boolean(tileMatches[box.rectId])
+      if (matchMode) {
+        ctx.strokeStyle = isMatched ? "#16a34a" : "#f97316"
+        ctx.lineWidth = isMatched ? 3 : 2
+      } else {
+        ctx.strokeStyle = order ? "#2563eb" : "#ef4444"
+        ctx.lineWidth = order ? 3 : 2
+      }
       ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
-      ctx.fillStyle = order ? "#2563eb" : "#ef4444"
+      ctx.fillStyle = matchMode ? (isMatched ? "#16a34a" : "#f97316") : order ? "#2563eb" : "#ef4444"
       ctx.fillText(`${order ?? index + 1}`, padded.x + 4, padded.y + 14)
       if (order) {
         ctx.save()
@@ -507,7 +607,7 @@ export default function PdfTileDetectionPage({
       }
     }
 
-    if (!orderingMode && selected) {
+    if (!orderingMode && !matchMode && selected) {
       const canvasRect = pdfRectToCanvasRect(selected, viewport)
       const handles = getHandleRects(canvasRect)
       handles.forEach((handle) => {
@@ -521,7 +621,142 @@ export default function PdfTileDetectionPage({
     if (!overlay) return
     const raf = requestAnimationFrame(() => drawOverlay(boxes))
     return () => cancelAnimationFrame(raf)
-  }, [boxes, hoverRectIndex, selectedRectIndex, rectPaddingPx, rectConfigs])
+  }, [boxes, hoverRectIndex, selectedRectIndex, rectPaddingPx, rectConfigs, matchMode, tileMatches])
+
+  function toggleMatchMode() {
+    setMatchMode((prev) => {
+      const next = !prev
+      if (next) {
+        setOrderingMode(false)
+      }
+      return next
+    })
+  }
+
+  function assignMatch(rectId: string, imageId: string) {
+    if (!currentProject) return
+    const nextMatches: Record<string, string> = {
+      ...(currentProject.tileMatches ?? {}),
+    }
+    Object.entries(nextMatches).forEach(([existingRectId, existingImageId]) => {
+      if (existingImageId === imageId) {
+        delete nextMatches[existingRectId]
+      }
+    })
+    nextMatches[rectId] = imageId
+    updateActiveProject((project) => ({
+      ...project,
+      tileMatches: nextMatches,
+      updatedAt: new Date().toISOString(),
+    }))
+  }
+
+  function clearMatch(rectId: string) {
+    if (!currentProject) return
+    if (!tileMatches[rectId]) return
+    updateActiveProject((project) => {
+      const nextMatches = { ...(project.tileMatches ?? {}) }
+      delete nextMatches[rectId]
+      return {
+        ...project,
+        tileMatches: nextMatches,
+        updatedAt: new Date().toISOString(),
+      }
+    })
+  }
+
+  function selectNextUnmatchedRect(startRectId?: string | null, nextMatches?: Record<string, string>) {
+    const matches = nextMatches ?? tileMatches
+    const { nextId } = getNextRectId(startRectId ?? null, matches)
+    if (!nextId) return
+    const nextIndexInBoxes = boxes.findIndex((box) => box.rectId === nextId)
+    if (nextIndexInBoxes !== -1) {
+      setSelectedRectIndex(nextIndexInBoxes)
+    }
+  }
+
+  function getNextRectId(currentRectId: string | null, matches: Record<string, string>) {
+    const candidates = boxes
+      .map((box, index) => ({
+        box,
+        index,
+        rectId: box.rectId,
+        include: rectConfigs[index]?.include ?? true,
+        cx: box.xPdf + box.wPdf / 2,
+        cy: box.yPdf + box.hPdf / 2,
+      }))
+      .filter((item) => item.include && !matches[item.rectId])
+
+    if (candidates.length === 0) {
+      return { nextId: null as string | null, nextIndex: -1 }
+    }
+
+    const currentBox = boxes.find((box) => box.rectId === currentRectId) ?? null
+    const currentCx = currentBox ? currentBox.xPdf + currentBox.wPdf / 2 : null
+    const currentCy = currentBox ? currentBox.yPdf + currentBox.hPdf / 2 : null
+
+    let next: typeof candidates[number] | null = null
+    let reason: "below" | "fallback" | "none" = "none"
+    let dy = 0
+    let dx = 0
+
+    if (currentCx !== null && currentCy !== null) {
+      const below = candidates
+        .filter((item) => item.cy > currentCy + 5)
+        .map((item) => ({
+          ...item,
+          dy: item.cy - currentCy,
+          dx: Math.abs(item.cx - currentCx),
+        }))
+
+      if (below.length > 0) {
+        const minDy = Math.min(...below.map((item) => item.dy))
+        const nearDy = below.filter((item) => item.dy <= minDy + 15)
+        next = nearDy.reduce((best, item) => {
+          if (!best) return item
+          if (item.dx < best.dx) return item
+          return best
+        }, null as typeof nearDy[number] | null)
+        reason = "below"
+        if (next) {
+          dy = next.cy - currentCy
+          dx = Math.abs(next.cx - currentCx)
+        }
+      } else {
+        next = candidates.reduce((best, item) => {
+          if (!best) return item
+          const dist = (item.cy - currentCy) ** 2 + (item.cx - currentCx) ** 2
+          const bestDist = (best.cy - currentCy) ** 2 + (best.cx - currentCx) ** 2
+          return dist < bestDist ? item : best
+        }, null as typeof candidates[number] | null)
+        reason = "fallback"
+        if (next) {
+          dy = next.cy - currentCy
+          dx = Math.abs(next.cx - currentCx)
+        }
+      }
+    } else {
+      next = candidates[0]
+      reason = "fallback"
+    }
+
+    return {
+      nextId: next?.rectId ?? null,
+      nextIndex: next?.index ?? -1,
+    }
+  }
+
+  function parseImageMapping(fileName: string) {
+    const pageMatch = fileName.match(/-p(\d{1,2})-/i)
+    const boxMatch = fileName.match(/-box(\d{2})-/i)
+    if (!pageMatch || !boxMatch) return null
+    const imgPage = Number.parseInt(pageMatch[1], 10)
+    const boxOrder = Number.parseInt(boxMatch[1], 10)
+    if (!Number.isFinite(imgPage) || !Number.isFinite(boxOrder)) return null
+    const spreadNumber = Math.ceil(imgPage / 2)
+    const half = imgPage % 2 === 1 ? "left" : "right"
+    return { spreadNumber, half, boxOrder }
+  }
 
   function handleOverlayClick(event: React.MouseEvent<HTMLCanvasElement>) {
     if (wasResizingRef.current) {
@@ -568,10 +803,6 @@ export default function PdfTileDetectionPage({
         }
       } else {
         setSelectedRectIndex(index)
-        const el = listItemRefs.current.get(index)
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "nearest" })
-        }
       }
     }
   }
@@ -603,6 +834,13 @@ export default function PdfTileDetectionPage({
     event.preventDefault()
     if (orderingMode) {
       toast.message("Exit ordering mode to remove tiles.")
+      return
+    }
+    if (matchMode) {
+      const rectId = boxes[hitIndex]?.rectId
+      if (rectId) {
+        clearMatch(rectId)
+      }
       return
     }
     handleToggleInclude(hitIndex, false)
@@ -638,7 +876,7 @@ export default function PdfTileDetectionPage({
   }
 
   function handleOverlayMouseDown(event: React.MouseEvent<HTMLCanvasElement>) {
-    if (orderingMode) return
+    if (orderingMode || matchMode) return
     if (selectedRectIndex === null) return
     const point = getCanvasPoint(event)
     if (!point) return
@@ -661,6 +899,10 @@ export default function PdfTileDetectionPage({
   function handleOverlayMouseMove(event: React.MouseEvent<HTMLCanvasElement>) {
     const overlay = overlayCanvasRef.current
     if (!overlay) return
+    if (orderingMode || matchMode) {
+      setOverlayCursor("default")
+      return
+    }
     const point = getCanvasPoint(event)
     if (!point) return
 
@@ -763,6 +1005,7 @@ export default function PdfTileDetectionPage({
         }
         const pdfRect = canvasRectToPdfRect(cssRect, viewport)
         return {
+          rectId: createRectId(),
           pageNumber,
           ...pdfRect,
           areaPdf: pdfRect.wPdf * pdfRect.hPdf,
@@ -917,6 +1160,9 @@ export default function PdfTileDetectionPage({
       setOrderingMode(false)
       return
     }
+    if (matchMode) {
+      setMatchMode(false)
+    }
     const hasIncluded = boxes.some((_, index) => rectConfigs[index]?.include ?? true)
     if (!hasIncluded) {
       toast.error("No included rectangles to order.")
@@ -991,14 +1237,22 @@ export default function PdfTileDetectionPage({
     )
   }
 
+  function parseSpreadNumber(name: string | undefined) {
+    if (!name) return null
+    const match = name.match(/(?:^|\s|-)P(\d{1,2})(?:\D|$)/i)
+    if (!match) return null
+    const value = Number(match[1])
+    return Number.isFinite(value) ? value : null
+  }
+
   function buildExportMap() {
-    return pdfs.map((entry) => ({
-      pdfId: entry.id,
-      name: entry.name,
-      pages: Object.entries(entry.pages).map(([pageKey, data]) => ({
-        pageNumber: Number(pageKey),
-        boxes: data.boxes
-          .map((box, index) => ({
+    return pdfs.map((entry, index) => {
+      const pageKeys = Object.keys(entry.pages)
+      const firstKey = pageKeys[0]
+      const data = firstKey ? entry.pages[Number(firstKey)] : undefined
+      const boxes = data
+        ? data.boxes.map((box, index) => ({
+            rectId: box.rectId,
             xPdf: box.xPdf,
             yPdf: box.yPdf,
             wPdf: box.wPdf,
@@ -1006,9 +1260,30 @@ export default function PdfTileDetectionPage({
             include: data.rectConfigs[index]?.include ?? true,
             orderIndex: data.rectConfigs[index]?.orderIndex,
           }))
-          .filter((item) => item.include),
-      })),
-    }))
+        : []
+      return {
+        pdfId: entry.id,
+        filename: entry.name,
+        spreadNumber: parseSpreadNumber(entry.name) ?? index + 1,
+        pages: {
+          "1": {
+            pageNumber: 1,
+            pageWidth: data?.pageWidth,
+            pageHeight: data?.pageHeight,
+            boxes,
+          },
+        },
+      }
+    })
+  }
+
+  function buildExportByPdfAssetId() {
+    const map: Record<string, ReturnType<typeof buildExportMap>[number]> = {}
+    const entries = buildExportMap()
+    for (const entry of entries) {
+      map[entry.pdfId] = entry
+    }
+    return map
   }
 
   function handleFinishDetection() {
@@ -1023,11 +1298,13 @@ export default function PdfTileDetectionPage({
       if (!proceed) return
     }
     const exportMap = buildExportMap()
+    const exportByPdfAssetId = buildExportByPdfAssetId()
     updateActiveProject((project) => ({
       ...project,
       pdfDetection: {
         ...(project.pdfDetection ?? {}),
         export: exportMap,
+        byPdfAssetId: exportByPdfAssetId,
       },
       stage: "catalogue",
       updatedAt: new Date().toISOString(),
@@ -1059,6 +1336,7 @@ export default function PdfTileDetectionPage({
     setRectPaddingPx(10)
     setCurrentOrderCounter(1)
     setOrderingMode(false)
+    setMatchMode(false)
     setOrderingFinished(false)
     setHoverRectIndex(null)
     setSelectedRectIndex(null)
@@ -1125,6 +1403,8 @@ export default function PdfTileDetectionPage({
           orderingFinished,
           currentOrderCounter,
           rectPaddingPx,
+          pageWidth: pageSizeRef.current?.width,
+          pageHeight: pageSizeRef.current?.height,
         }
         return {
           ...entry,
@@ -1141,7 +1421,8 @@ export default function PdfTileDetectionPage({
   function loadPageState(entry: PdfEntry, page: number) {
     isSyncingRef.current = true
     const data = entry.pages[page]
-    setBoxes(data?.boxes ?? [])
+    const nextBoxes = data?.boxes ? ensureRectIds(data.boxes) : []
+    setBoxes(nextBoxes)
     setRectConfigs(data?.rectConfigs ?? {})
     setRectPaddingPx(data?.rectPaddingPx ?? 10)
     setCurrentOrderCounter(data?.currentOrderCounter ?? 1)
@@ -1235,7 +1516,7 @@ export default function PdfTileDetectionPage({
               name: existing?.name ?? stored?.name ?? "Missing PDF",
               pageCount: existing?.pageCount ?? 1,
               selectedPage: existing?.selectedPage ?? 1,
-              pages: existing?.pages ?? {},
+              pages: normalizePages(existing?.pages),
               fileId: assetId,
               missing: true,
             })
@@ -1250,7 +1531,7 @@ export default function PdfTileDetectionPage({
             name: stored.name,
             pageCount: doc.numPages,
             selectedPage: existing?.selectedPage ?? pageNumberFromName ?? 1,
-            pages: existing?.pages ?? {},
+            pages: normalizePages(existing?.pages),
             fileId: assetId,
             missing: false,
           })
@@ -1260,7 +1541,7 @@ export default function PdfTileDetectionPage({
             name: existing?.name ?? "Missing PDF",
             pageCount: existing?.pageCount ?? 1,
             selectedPage: existing?.selectedPage ?? 1,
-            pages: existing?.pages ?? {},
+            pages: normalizePages(existing?.pages),
             fileId: assetId,
             missing: true,
           })
@@ -1287,6 +1568,50 @@ export default function PdfTileDetectionPage({
     () => pdfs.find((entry) => entry.id === selectedPdfId) ?? null,
     [pdfs, selectedPdfId]
   )
+
+  const rectIdByImageId = useMemo(() => {
+    const map = new Map<string, string>()
+    Object.entries(tileMatches).forEach(([rectId, imageId]) => {
+      map.set(imageId, rectId)
+    })
+    return map
+  }, [tileMatches])
+
+  const currentSpreadNumber = useMemo(() => {
+    if (!selectedPdfEntry) return null
+    return parseSpreadNumber(selectedPdfEntry.name)
+  }, [selectedPdfEntry])
+
+  const visibleImages = useMemo(() => {
+    if (showAllImages || !currentSpreadNumber) return imageAssets
+    return imageAssets.filter((asset) => asset.spreadNumber === currentSpreadNumber)
+  }, [imageAssets, showAllImages, currentSpreadNumber])
+
+  const sortedVisibleImages = useMemo(() => {
+    return [...visibleImages].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+    )
+  }, [visibleImages])
+
+  useEffect(() => {
+    if (!isDev) return
+    if (boxes.length === 0) return
+    const preview = boxes
+      .map((box, index) => ({ box, index }))
+      .filter(({ index }) => rectConfigs[index]?.include ?? true)
+      .sort((a, b) => {
+        if (a.box.yPdf !== b.box.yPdf) return a.box.yPdf - b.box.yPdf
+        return a.box.xPdf - b.box.xPdf
+      })
+      .slice(0, 15)
+      .map((item, idx) => ({
+        idx,
+        id: item.box.rectId,
+        x: item.box.xPdf,
+        y: item.box.yPdf,
+      }))
+    console.log("[reading-order-15]", preview)
+  }, [boxes, rectConfigs, isDev])
 
   useEffect(() => {
     void runAutoDetectIfNeeded(selectedPdfEntry)
@@ -1317,10 +1642,84 @@ export default function PdfTileDetectionPage({
     [pdfs, selectedPdfId]
   )
 
+  const detectionSummary = useMemo(() => {
+    if (!currentProject) return []
+    const detectionState = currentProject.pdfDetection as {
+      byPdfAssetId?: Record<string, {
+        pdfId: string
+        filename?: string
+        spreadNumber?: number
+        pages: Record<string, {
+          pageNumber: number
+          pageWidth?: number
+          pageHeight?: number
+          boxes: Array<{ include?: boolean; orderIndex?: number }>
+        }>
+      }>
+      export?: Array<{
+        pdfId: string
+        filename?: string
+        spreadNumber?: number
+        pages: Record<string, {
+          pageNumber: number
+          pageWidth?: number
+          pageHeight?: number
+          boxes: Array<{ include?: boolean; orderIndex?: number }>
+        }>
+      }>
+    }
+    return currentProject.pdfAssetIds.map((assetId, index) => {
+      const entry =
+        detectionState.byPdfAssetId?.[assetId] ??
+        detectionState.export?.find((item) => item.pdfId === assetId)
+      const pageKeys = entry ? Object.keys(entry.pages ?? {}) : []
+      const pages = entry?.pages ?? {}
+      const boxes = Object.values(pages).flatMap((page) => page.boxes ?? [])
+      const included = boxes.filter((box) => box.include ?? true)
+      const ordered = included.filter((box) => Number.isFinite(box.orderIndex))
+      const hasSize = Object.values(pages).some(
+        (page) => Number.isFinite(page.pageWidth) && Number.isFinite(page.pageHeight)
+      )
+      const name =
+        pdfs.find((pdf) => pdf.id === assetId)?.name ??
+        entry?.filename ??
+        `PDF ${index + 1}`
+      return {
+        assetId,
+        name,
+        spreadNumber: entry?.spreadNumber,
+        exportPresent: Boolean(entry),
+        totalCount: boxes.length,
+        includedCount: included.length,
+        orderedCount: ordered.length,
+        hasSize,
+        pageKeys,
+      }
+    })
+  }, [currentProject, pdfs])
+
   async function goToPdfByIndex(index: number) {
     const entry = pdfs[index]
     if (!entry) return
     await handleSelectPdf(entry)
+  }
+
+  function downloadDetectionExport() {
+    if (!currentProject) return
+    const payload = {
+      projectId: currentProject.id,
+      projectName: currentProject.name,
+      pdfDetection: currentProject.pdfDetection ?? {},
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `${currentProject.name || "catalogue"}-pdf-detection.json`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
   }
 
   if (!currentProject) {
@@ -1375,6 +1774,14 @@ export default function PdfTileDetectionPage({
               </Button>
               <Button
                 type="button"
+                size="sm"
+                variant={matchMode ? "default" : "outline"}
+                onClick={toggleMatchMode}
+              >
+                {matchMode ? "Exit Match Mode" : "Match Tiles"}
+              </Button>
+              <Button
+                type="button"
                 size="icon"
                 variant="ghost"
                 onClick={() => setAdvancedOpen((prev) => !prev)}
@@ -1387,6 +1794,96 @@ export default function PdfTileDetectionPage({
           </div>
         </CardHeader>
         <CardContent>
+          {SHOW_EXPORT_SUMMARY ? (
+          <Card className="mb-4">
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle>Detection Export Summary</CardTitle>
+                <Button type="button" size="sm" variant="outline" onClick={downloadDetectionExport}>
+                  Download export JSON
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="text-muted-foreground">
+                Project: <span className="text-foreground">{currentProject.name}</span> ({currentProject.id})
+              </div>
+              <div className="text-muted-foreground">
+                PDFs: <span className="text-foreground">{currentProject.pdfAssetIds.length}</span>
+              </div>
+              {isDev && detectionSummary.length > 0 ? (
+                <div className="rounded-md border border-dashed border-border p-2 text-xs text-muted-foreground">
+                  <div className="font-medium text-foreground">Spread Index Audit</div>
+                  {(() => {
+                    const sorted = [...detectionSummary].sort((a, b) => {
+                      const aNum = a.spreadNumber ?? Number.POSITIVE_INFINITY
+                      const bNum = b.spreadNumber ?? Number.POSITIVE_INFINITY
+                      return aNum - bNum
+                    })
+                    const numbers = sorted
+                      .map((row) => row.spreadNumber)
+                      .filter((value): value is number => typeof value === "number")
+                    const duplicates = numbers.filter(
+                      (value, index, arr) => arr.indexOf(value) !== index
+                    )
+                    const max = numbers.length > 0 ? Math.max(...numbers) : 0
+                    const gaps = []
+                    for (let i = 1; i <= max; i += 1) {
+                      if (!numbers.includes(i)) gaps.push(i)
+                    }
+                    return (
+                      <>
+                        <div className="mt-1">
+                          {sorted.map((row) => (
+                            <div key={row.assetId}>
+                              #{row.spreadNumber ?? "?"} → {row.name} → {row.assetId} | Included{" "}
+                              {row.includedCount} | Ordered {row.orderedCount}
+                            </div>
+                          ))}
+                        </div>
+                        {duplicates.length > 0 ? (
+                          <div className="mt-2 text-destructive">
+                            Duplicates: {Array.from(new Set(duplicates)).join(", ")}
+                          </div>
+                        ) : null}
+                        {gaps.length > 0 ? (
+                          <div className="text-destructive">Gaps: {gaps.join(", ")}</div>
+                        ) : null}
+                      </>
+                    )
+                  })()}
+                </div>
+              ) : null}
+              {detectionSummary.length === 0 ? (
+                <div className="text-xs text-muted-foreground">No export data available.</div>
+              ) : (
+                <div className="space-y-2">
+                  {detectionSummary.map((row, index) => {
+                    const hasWarning = !row.exportPresent || row.orderedCount === 0
+                    return (
+                      <div key={row.assetId} className="rounded-md border border-border p-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-medium">
+                            {index + 1}. {row.name}
+                          </div>
+                          {hasWarning ? (
+                            <Badge variant="destructive">Check export</Badge>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Export: {row.exportPresent ? "yes" : "no"} | Spread:{" "}
+                          {row.spreadNumber ?? "?"} | Total: {row.totalCount} | Included: {row.includedCount} | Ordered:{" "}
+                          {row.orderedCount} | Page size: {row.hasSize ? "yes" : "no"} | keys:{" "}
+                          {row.pageKeys.length ? row.pageKeys.join(",") : "none"}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          ) : null}
           <div className="grid items-start gap-4 lg:grid-cols-[320px_1fr_360px]">
             <div className="space-y-4">
               <div className="space-y-2">
@@ -1608,83 +2105,181 @@ export default function PdfTileDetectionPage({
                 </div>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Detected boxes</Label>
-              <div className="max-h-[60vh] overflow-y-auto rounded-md border border-border bg-background p-2 text-xs">
-                {displayRects.length === 0 ? (
-                  <div className="text-muted-foreground">No boxes detected.</div>
-                ) : (
-                  displayRects.map((box) => (
-                    <div
-                      key={`${box.index}-${box.xPdf}-${box.yPdf}`}
-                      ref={(el) => {
-                        if (el) listItemRefs.current.set(box.index, el)
-                      }}
-                      className={`cursor-pointer rounded px-2 py-1 ${
-                        selectedRectIndex === box.index
-                          ? "bg-emerald-100"
-                          : hoverRectIndex === box.index
-                          ? "bg-amber-100"
-                          : "hover:bg-muted"
-                      }`}
-                      onMouseEnter={() => setHoverRectIndex(box.index)}
-                      onMouseLeave={() => setHoverRectIndex(null)}
-                      onClick={() => setSelectedRectIndex(box.index)}
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={rectConfigs[box.index]?.include ?? true}
-                            onChange={(event) =>
-                              handleToggleInclude(box.index, event.target.checked)
-                            }
-                            disabled={orderingMode}
-                          />
-                          Include
-                        </label>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => adjustPadding(box.index, 5)}
-                          disabled={orderingMode}
-                        >
-                          +5px
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => adjustPadding(box.index, -5)}
-                          disabled={orderingMode}
-                        >
-                          -5px
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => resetPadding(box.index)}
-                          disabled={orderingMode}
-                        >
-                          Reset
-                        </Button>
-                      </div>
-                      <div>
-                        #{box.index + 1} Order #
-                        {orderedIncluded.find((item) => item.index === box.index)?.order ?? "-"} x=
-                        {Math.round(box.xPdf)} y={Math.round(box.yPdf)} w=
-                        {Math.round(box.wPdf)} h={Math.round(box.hPdf)} area=
-                        {Math.round(box.areaPdf)} (
-                      {pageArea > 0
-                        ? `${((box.areaPdf / pageArea) * 100).toFixed(2)}%`
-                        : "0.00%"}
-                      )
-                      </div>
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle>Match Tiles</CardTitle>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowAllImages((prev) => !prev)}
+                      >
+                        {showAllImages ? "Show current spread" : "Show all images"}
+                      </Button>
                     </div>
-                  ))
-                )}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {matchMode ? (
+                    <p className="text-xs text-muted-foreground">
+                      Select a rectangle, then click a tile image to assign. Right-click a rect to clear.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Enable Match Mode to link rects with tile images.
+                    </p>
+                  )}
+                  {matchMode && selectedRectIndex !== null ? (
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-muted-foreground">
+                        Selected rect: #{selectedRectIndex + 1}
+                      </span>
+                      {boxes[selectedRectIndex] &&
+                      tileMatches[boxes[selectedRectIndex].rectId] ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => clearMatch(boxes[selectedRectIndex].rectId)}
+                        >
+                          Clear match
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {sortedVisibleImages.length === 0 ? (
+                      <div className="col-span-full text-xs text-muted-foreground">
+                        No images for this spread.
+                      </div>
+                    ) : (
+                      sortedVisibleImages.map((image) => {
+                        const rectId = rectIdByImageId.get(image.assetId)
+                        const matchedIndex = rectId
+                          ? boxes.findIndex((box) => box.rectId === rectId)
+                          : -1
+                        const isMatched = rectId !== undefined
+                        return (
+                          <button
+                            key={image.assetId}
+                            type="button"
+                            className={`flex flex-col items-start gap-1 rounded-md border px-2 py-2 text-left text-xs ${
+                              isMatched ? "border-emerald-500 bg-emerald-50" : "border-border hover:bg-muted"
+                            }`}
+                            onClick={() => {
+                              if (!matchMode) return
+                              const selected = selectedRectIndex !== null ? boxes[selectedRectIndex] : null
+                              if (!selected) return
+                              assignMatch(selected.rectId, image.assetId)
+                            }}
+                          >
+                            <img
+                              src={image.url}
+                              alt={image.name}
+                              className="h-28 w-full rounded object-contain bg-muted"
+                            />
+                            <div className="w-full truncate">{image.name}</div>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <Badge variant={isMatched ? "default" : "outline"}>
+                                {isMatched ? "Matched" : "Unmatched"}
+                              </Badge>
+                              {matchedIndex >= 0 ? (
+                                <Badge variant="secondary">Rect {matchedIndex + 1}</Badge>
+                              ) : null}
+                            </div>
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+              <div className="space-y-2">
+                <Label>Detected boxes</Label>
+                <div className="max-h-[60vh] overflow-y-auto rounded-md border border-border bg-background p-2 text-xs">
+                  {displayRects.length === 0 ? (
+                    <div className="text-muted-foreground">No boxes detected.</div>
+                  ) : (
+                    displayRects.map((box) => (
+                      <div
+                        key={`${box.index}-${box.xPdf}-${box.yPdf}`}
+                        ref={(el) => {
+                          if (el) listItemRefs.current.set(box.index, el)
+                        }}
+                        className={`cursor-pointer rounded px-2 py-1 ${
+                          selectedRectIndex === box.index
+                            ? "bg-emerald-100"
+                            : hoverRectIndex === box.index
+                            ? "bg-amber-100"
+                            : "hover:bg-muted"
+                        }`}
+                        onMouseEnter={() => setHoverRectIndex(box.index)}
+                        onMouseLeave={() => setHoverRectIndex(null)}
+                        onClick={() => setSelectedRectIndex(box.index)}
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={rectConfigs[box.index]?.include ?? true}
+                              onChange={(event) =>
+                                handleToggleInclude(box.index, event.target.checked)
+                              }
+                              disabled={orderingMode || matchMode}
+                            />
+                            Include
+                          </label>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => adjustPadding(box.index, 5)}
+                            disabled={orderingMode || matchMode}
+                          >
+                            +5px
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => adjustPadding(box.index, -5)}
+                            disabled={orderingMode || matchMode}
+                          >
+                            -5px
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => resetPadding(box.index)}
+                            disabled={orderingMode || matchMode}
+                          >
+                            Reset
+                          </Button>
+                        </div>
+                        <div>
+                          #{box.index + 1} Order #
+                          {orderedIncluded.find((item) => item.index === box.index)?.order ?? "-"} x=
+                          {Math.round(box.xPdf)} y={Math.round(box.yPdf)} w=
+                          {Math.round(box.wPdf)} h={Math.round(box.hPdf)} area=
+                          {Math.round(box.areaPdf)} (
+                        {pageArea > 0
+                          ? `${((box.areaPdf / pageArea) * 100).toFixed(2)}%`
+                          : "0.00%"}
+                        )
+                        </div>
+                        {tileMatches[boxes[box.index]?.rectId ?? ""] ? (
+                          <div className="text-muted-foreground">
+                            Matched image: {tileMatches[boxes[box.index]?.rectId ?? ""]}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           </div>

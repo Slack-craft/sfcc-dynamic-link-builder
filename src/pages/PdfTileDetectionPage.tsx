@@ -25,6 +25,12 @@ export default function PdfTileDetectionPage() {
   const [minAreaPercent, setMinAreaPercent] = useState(1)
   const [dilateIterations, setDilateIterations] = useState(2)
   const [boxes, setBoxes] = useState<DetectedBox[]>([])
+  const [rectPaddingPx, setRectPaddingPx] = useState(10)
+  const [rectConfigs, setRectConfigs] = useState<
+    Record<number, { include: boolean; paddingOverride?: number; orderIndex?: number }>
+  >({})
+  const [orderingMode, setOrderingMode] = useState(false)
+  const [currentOrderCounter, setCurrentOrderCounter] = useState(1)
   const [detecting, setDetecting] = useState(false)
   const [opencvStatus, setOpenCvStatus] = useState<"idle" | "loading" | "ready" | "failed">("idle")
   const [opencvError, setOpenCvError] = useState<string | null>(null)
@@ -46,6 +52,67 @@ export default function PdfTileDetectionPage() {
       })),
     [boxes]
   )
+
+  const orderedIncluded = useMemo(() => {
+    const included = boxes
+      .map((box, index) => ({
+        box,
+        index,
+        cy: box.y + box.height / 2,
+      }))
+      .filter(({ index }) => rectConfigs[index]?.include ?? true)
+    if (included.length === 0) return []
+
+    const manual = included
+      .filter(({ index }) => typeof rectConfigs[index]?.orderIndex === "number")
+      .map((item) => ({
+        ...item,
+        order: rectConfigs[item.index]?.orderIndex as number,
+      }))
+      .sort((a, b) => a.order - b.order)
+
+    if (manual.length > 0) {
+      return manual
+    }
+
+    const heights = included.map((item) => item.box.height).sort((a, b) => a - b)
+    const medianHeight =
+      heights.length % 2 === 1
+        ? heights[Math.floor(heights.length / 2)]
+        : (heights[heights.length / 2 - 1] + heights[heights.length / 2]) / 2
+    const rowTolerance = medianHeight * 0.4
+
+    const sortedByCy = [...included].sort((a, b) => a.cy - b.cy)
+    const rows: { cy: number; items: typeof sortedByCy }[] = []
+    for (const item of sortedByCy) {
+      const row = rows[rows.length - 1]
+      if (!row || Math.abs(item.cy - row.cy) > rowTolerance) {
+        rows.push({ cy: item.cy, items: [item] })
+      } else {
+        row.items.push(item)
+        row.cy = row.items.reduce((sum, current) => sum + current.cy, 0) / row.items.length
+      }
+    }
+
+    const flattened: typeof sortedByCy = []
+    rows.forEach((row) => {
+      row.items.sort((a, b) => a.box.x - b.box.x)
+      flattened.push(...row.items)
+    })
+
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.log("[PDF Detect] Row grouping", {
+        rowTolerance,
+        rows: rows.map((row) => row.items.map((item) => item.index)),
+      })
+    }
+
+    return flattened.map((item, order) => ({
+      ...item,
+      order: order + 1,
+    }))
+  }, [boxes, rectConfigs])
 
   const pageArea = useMemo(() => {
     const canvas = pdfCanvasRef.current
@@ -102,6 +169,17 @@ export default function PdfTileDetectionPage() {
     setPageRendered(true)
   }
 
+  function getPaddedRect(box: DetectedBox, padding: number) {
+    const canvas = pdfCanvasRef.current
+    const maxW = canvas?.width ?? 0
+    const maxH = canvas?.height ?? 0
+    const x = Math.max(0, box.x - padding)
+    const y = Math.max(0, box.y - padding)
+    const width = Math.min(maxW - x, box.width + padding * 2)
+    const height = Math.min(maxH - y, box.height + padding * 2)
+    return { x, y, width, height }
+  }
+
   function drawOverlay(current: DetectedBox[]) {
     const overlay = overlayCanvasRef.current
     if (!overlay) return
@@ -113,8 +191,28 @@ export default function PdfTileDetectionPage() {
     ctx.font = "12px sans-serif"
     ctx.fillStyle = "#ef4444"
     current.forEach((box, index) => {
-      ctx.strokeRect(box.x, box.y, box.width, box.height)
-      ctx.fillText(`${index + 1}`, box.x + 4, box.y + 14)
+      if (!(rectConfigs[index]?.include ?? true)) return
+      const padding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
+      const padded = getPaddedRect(box, padding)
+      const order = rectConfigs[index]?.orderIndex
+      ctx.strokeStyle = order ? "#2563eb" : "#ef4444"
+      ctx.lineWidth = order ? 3 : 2
+      ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
+      ctx.fillStyle = order ? "#2563eb" : "#ef4444"
+      ctx.fillText(`${index + 1}`, padded.x + 4, padded.y + 14)
+      if (order) {
+        ctx.save()
+        ctx.fillStyle = "rgba(37, 99, 235, 0.85)"
+        ctx.font = "bold 20px sans-serif"
+        const label = `${order}`
+        const textWidth = ctx.measureText(label).width
+        ctx.fillText(
+          label,
+          padded.x + padded.width / 2 - textWidth / 2,
+          padded.y + padded.height / 2 + 8
+        )
+        ctx.restore()
+      }
     })
 
     const selected =
@@ -123,23 +221,31 @@ export default function PdfTileDetectionPage() {
       hoverRectIndex !== null ? current[hoverRectIndex] : null
 
     if (hovered) {
-      ctx.save()
-      ctx.strokeStyle = "#f59e0b"
-      ctx.lineWidth = 3
-      ctx.fillStyle = "rgba(245, 158, 11, 0.15)"
-      ctx.fillRect(hovered.x, hovered.y, hovered.width, hovered.height)
-      ctx.strokeRect(hovered.x, hovered.y, hovered.width, hovered.height)
-      ctx.restore()
+      if (rectConfigs[hoverRectIndex!]?.include ?? true) {
+        const padding = rectConfigs[hoverRectIndex!]?.paddingOverride ?? rectPaddingPx
+        const padded = getPaddedRect(hovered, padding)
+        ctx.save()
+        ctx.strokeStyle = "#f59e0b"
+        ctx.lineWidth = 3
+        ctx.fillStyle = "rgba(245, 158, 11, 0.15)"
+        ctx.fillRect(padded.x, padded.y, padded.width, padded.height)
+        ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
+        ctx.restore()
+      }
     }
 
     if (selected) {
+      if (rectConfigs[selectedRectIndex!]?.include ?? true) {
+        const padding = rectConfigs[selectedRectIndex!]?.paddingOverride ?? rectPaddingPx
+        const padded = getPaddedRect(selected, padding)
       ctx.save()
       ctx.strokeStyle = "#22c55e"
       ctx.lineWidth = 4
       ctx.fillStyle = "rgba(34, 197, 94, 0.18)"
-      ctx.fillRect(selected.x, selected.y, selected.width, selected.height)
-      ctx.strokeRect(selected.x, selected.y, selected.width, selected.height)
+      ctx.fillRect(padded.x, padded.y, padded.width, padded.height)
+      ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
       ctx.restore()
+    }
     }
   }
 
@@ -148,7 +254,7 @@ export default function PdfTileDetectionPage() {
     if (!overlay) return
     const raf = requestAnimationFrame(() => drawOverlay(boxes))
     return () => cancelAnimationFrame(raf)
-  }, [boxes, hoverRectIndex, selectedRectIndex])
+  }, [boxes, hoverRectIndex, selectedRectIndex, rectPaddingPx, rectConfigs])
 
   function handleOverlayClick(event: React.MouseEvent<HTMLCanvasElement>) {
     const overlay = overlayCanvasRef.current
@@ -162,10 +268,13 @@ export default function PdfTileDetectionPage() {
     let hitIndex: number | null = null
     let hitArea = Number.POSITIVE_INFINITY
     boxes.forEach((box, index) => {
-      const inX = x >= box.x && x <= box.x + box.width
-      const inY = y >= box.y && y <= box.y + box.height
+      if (!(rectConfigs[index]?.include ?? true)) return
+      const padding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
+      const padded = getPaddedRect(box, padding)
+      const inX = x >= padded.x && x <= padded.x + padded.width
+      const inY = y >= padded.y && y <= padded.y + padded.height
       if (inX && inY) {
-        const area = box.width * box.height
+        const area = padded.width * padded.height
         if (area < hitArea) {
           hitArea = area
           hitIndex = index
@@ -174,10 +283,23 @@ export default function PdfTileDetectionPage() {
     })
 
     if (hitIndex !== null) {
-      setSelectedRectIndex(hitIndex)
-      const el = listItemRefs.current.get(hitIndex)
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "nearest" })
+      if (orderingMode) {
+        const current = rectConfigs[hitIndex]
+        if (current?.include ?? true) {
+          if (current?.orderIndex === undefined) {
+            setRectConfigs((prev) => ({
+              ...prev,
+              [hitIndex]: { ...prev[hitIndex], include: true, orderIndex: currentOrderCounter },
+            }))
+            setCurrentOrderCounter((prev) => prev + 1)
+          }
+        }
+      } else {
+        setSelectedRectIndex(hitIndex)
+        const el = listItemRefs.current.get(hitIndex)
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "nearest" })
+        }
       }
     }
   }
@@ -204,8 +326,15 @@ export default function PdfTileDetectionPage() {
         dilateIterations,
       })
       setBoxes(detected)
+      setRectConfigs(
+        Object.fromEntries(
+          detected.map((_, index) => [index, { include: true }])
+        )
+      )
       setHoverRectIndex(null)
       setSelectedRectIndex(null)
+      setCurrentOrderCounter(1)
+      setOrderingMode(false)
       drawOverlay(detected)
     } catch (error) {
       console.error(error)
@@ -238,13 +367,109 @@ export default function PdfTileDetectionPage() {
     try {
       await renderPage()
       setBoxes([])
+      setRectConfigs({})
       setHoverRectIndex(null)
       setSelectedRectIndex(null)
+      setCurrentOrderCounter(1)
+      setOrderingMode(false)
     } catch {
       toast.error("Failed to render page.")
     } finally {
       setRendering(false)
     }
+  }
+
+  function handleToggleInclude(index: number, include: boolean) {
+    setRectConfigs((prev) => ({
+      ...prev,
+      [index]: {
+        include,
+        paddingOverride: prev[index]?.paddingOverride,
+        orderIndex: prev[index]?.orderIndex,
+      },
+    }))
+  }
+
+  function adjustPadding(index: number, delta: number) {
+    setRectConfigs((prev) => {
+      const current = prev[index]?.paddingOverride ?? rectPaddingPx
+      const nextValue = Math.max(0, Math.min(200, current + delta))
+      return {
+        ...prev,
+        [index]: { include: prev[index]?.include ?? true, paddingOverride: nextValue },
+      }
+    })
+  }
+
+  function resetPadding(index: number) {
+    setRectConfigs((prev) => ({
+      ...prev,
+      [index]: {
+        include: prev[index]?.include ?? true,
+        orderIndex: prev[index]?.orderIndex,
+      },
+    }))
+  }
+
+  function toggleOrderingMode() {
+    if (orderingMode) {
+      setOrderingMode(false)
+      return
+    }
+    const hasIncluded = boxes.some((_, index) => rectConfigs[index]?.include ?? true)
+    if (!hasIncluded) {
+      toast.error("No included rectangles to order.")
+      return
+    }
+    setOrderingMode(true)
+  }
+
+  function handleUndoOrder() {
+    const entries = Object.entries(rectConfigs)
+      .map(([key, value]) => ({ index: Number(key), orderIndex: value.orderIndex }))
+      .filter((item) => typeof item.orderIndex === "number") as { index: number; orderIndex: number }[]
+    if (entries.length === 0) return
+    const max = entries.reduce((acc, item) => (item.orderIndex > acc.orderIndex ? item : acc))
+    setRectConfigs((prev) => ({
+      ...prev,
+      [max.index]: { ...prev[max.index], orderIndex: undefined },
+    }))
+    setCurrentOrderCounter(max.orderIndex)
+  }
+
+  function handleResetOrder() {
+    setRectConfigs((prev) => {
+      const next: typeof prev = {}
+      for (const [key, value] of Object.entries(prev)) {
+        next[Number(key)] = { ...value, orderIndex: undefined }
+      }
+      return next
+    })
+    setCurrentOrderCounter(1)
+  }
+
+  function handleFinishOrdering() {
+    setOrderingMode(false)
+  }
+
+  function handleCommitDetected() {
+    const canvas = pdfCanvasRef.current
+    const pageW = canvas?.width ?? 0
+    const pageH = canvas?.height ?? 0
+    const committed = orderedIncluded.map((item) => {
+      const padding = rectConfigs[item.index]?.paddingOverride ?? rectPaddingPx
+      const padded = getPaddedRect(item.box, padding)
+      return {
+        page: pageNumber,
+        x: padded.x,
+        y: padded.y,
+        width: padded.width,
+        height: padded.height,
+        order: item.order,
+        areaPercent: pageW && pageH ? padded.width * padded.height / (pageW * pageH) : 0,
+      }
+    })
+    console.log("Committed detected tiles", committed)
   }
 
   return (
@@ -292,6 +517,18 @@ export default function PdfTileDetectionPage() {
                 Load OpenCV
               </Button>
               <div className="space-y-2">
+                <Label>Box padding (px)</Label>
+                <Input
+                  type="range"
+                  min={0}
+                  max={40}
+                  step={1}
+                  value={rectPaddingPx}
+                  onChange={(event) => setRectPaddingPx(Number(event.target.value))}
+                />
+                <div className="text-xs text-muted-foreground">Current: {rectPaddingPx}px</div>
+              </div>
+              <div className="space-y-2">
                 <Label>Canny low</Label>
                 <Input
                   type="number"
@@ -335,6 +572,30 @@ export default function PdfTileDetectionPage() {
               <Button type="button" onClick={handleDetectTiles} disabled={detecting || !pageRendered}>
                 {detecting ? "Detecting..." : "Detect tiles"}
               </Button>
+              <Button type="button" variant="secondary" onClick={handleCommitDetected} disabled={orderedIncluded.length === 0}>
+                Commit detected tiles
+              </Button>
+              <Button type="button" variant={orderingMode ? "default" : "outline"} onClick={toggleOrderingMode}>
+                {orderingMode ? "Exit Ordering Mode" : "Enable Ordering Mode"}
+              </Button>
+              {orderingMode ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Click included tiles on the canvas to assign order.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="outline" onClick={handleUndoOrder}>
+                      Undo last
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={handleResetOrder}>
+                      Reset order
+                    </Button>
+                    <Button type="button" size="sm" onClick={handleFinishOrdering}>
+                      Finish ordering
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
               <p className="text-xs text-muted-foreground">
                 OpenCV:{" "}
                 {opencvStatus === "loading"
@@ -380,13 +641,56 @@ export default function PdfTileDetectionPage() {
                         onMouseLeave={() => setHoverRectIndex(null)}
                         onClick={() => setSelectedRectIndex(box.index)}
                       >
-                        #{box.index + 1} x={Math.round(box.x)} y={Math.round(box.y)} w=
-                        {Math.round(box.width)} h={Math.round(box.height)} area=
-                        {Math.round(box.area)} (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={rectConfigs[box.index]?.include ?? true}
+                              onChange={(event) =>
+                                handleToggleInclude(box.index, event.target.checked)
+                              }
+                              disabled={orderingMode}
+                            />
+                            Include
+                          </label>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => adjustPadding(box.index, 5)}
+                            disabled={orderingMode}
+                          >
+                            +5px
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => adjustPadding(box.index, -5)}
+                            disabled={orderingMode}
+                          >
+                            -5px
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => resetPadding(box.index)}
+                            disabled={orderingMode}
+                          >
+                            Reset
+                          </Button>
+                        </div>
+                        <div>
+                          #{box.index + 1} Order #
+                          {orderedIncluded.find((item) => item.index === box.index)?.order ?? "-"} x=
+                          {Math.round(box.x)} y={Math.round(box.y)} w={Math.round(box.width)} h=
+                          {Math.round(box.height)} area={Math.round(box.area)} (
                         {pageArea > 0
                           ? `${((box.area / pageArea) * 100).toFixed(2)}%`
                           : "0.00%"}
                         )
+                        </div>
                       </div>
                     ))
                   )}

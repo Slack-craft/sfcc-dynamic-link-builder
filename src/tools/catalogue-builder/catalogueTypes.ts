@@ -24,10 +24,21 @@ export type Tile = {
   image?: TileImageRef
 }
 
+export type Region = "AU" | "NZ"
+
+export type DetectionMaps = Record<
+  string,
+  Record<string, { x: number; y: number; width: number; height: number; order: number }[]>
+>
+
 export type CatalogueProject = {
   id: string
   name: string
+  region: Region
   createdAt: string
   updatedAt: string
+  tileImageIds: string[]
+  pdfIds: string[]
+  detectionMaps: DetectionMaps
   tiles: Tile[]
 }

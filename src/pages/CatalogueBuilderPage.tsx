@@ -5,20 +5,36 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
 import DynamicLinkBuilder from "@/tools/link-builder/DynamicLinkBuilder"
 import { createWorker } from "tesseract.js"
 import {
-  loadProject,
-  newProject,
-  saveProject,
+  createProject,
+  loadProjectsState,
+  saveProjectsState,
   updateTile,
-} from "@/tools/catalogue-builder/catalogueStorage"
-import {
-  clearImagesForProject,
-  getImage,
-  putImage,
-} from "@/tools/catalogue-builder/imageStore"
+} from "@/tools/catalogue-builder/catalogueProjectsStorage"
+import { clearImagesForProject, getImage, putImage } from "@/tools/catalogue-builder/imageStore"
+import { deleteAssetsForProject, putAsset } from "@/lib/assetStore"
 import {
   extractPlusFromText,
   extractTextInRect,
@@ -28,6 +44,7 @@ import {
 } from "@/tools/catalogue-builder/pdfTileMatcher"
 import type {
   CatalogueProject,
+  Region,
   Tile,
   TileStatus,
 } from "@/tools/catalogue-builder/catalogueTypes"
@@ -266,16 +283,18 @@ async function recognizeWithFallback(
   }
 }
 
-async function deleteImagesForTiles(tiles: Tile[]) {
-  const keys: string[] = []
+async function deleteImagesForProject(projectId: string) {
+  await clearImagesForProject(projectId)
+}
+
+function collectTileImageIds(tiles: Tile[]) {
+  const ids: string[] = []
   for (const tile of tiles) {
-    if (tile.imageKey) keys.push(tile.imageKey)
-    if (tile.grayImageKey) keys.push(tile.grayImageKey)
-    if (tile.ocrImageKey) keys.push(tile.ocrImageKey)
+    if (tile.imageKey) ids.push(tile.imageKey)
+    if (tile.grayImageKey) ids.push(tile.grayImageKey)
+    if (tile.ocrImageKey) ids.push(tile.ocrImageKey)
   }
-  if (keys.length > 0) {
-    await clearImagesForProject(keys)
-  }
+  return ids
 }
 
 function buildPlusFromCandidates(candidates: string[]) {
@@ -285,8 +304,10 @@ function buildPlusFromCandidates(candidates: string[]) {
 }
 
 export default function CatalogueBuilderPage() {
-  const [project, setProject] = useState<CatalogueProject | null>(() => loadProject())
-  const [projectName, setProjectName] = useState("")
+  const [projectsState, setProjectsState] = useState(() => loadProjectsState())
+  const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [newProjectName, setNewProjectName] = useState("")
+  const [newProjectRegion, setNewProjectRegion] = useState<Region>("AU")
   const [selectedTileId, setSelectedTileId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState("")
   const [draftStatus, setDraftStatus] = useState<TileStatus>("todo")
@@ -320,6 +341,147 @@ export default function CatalogueBuilderPage() {
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
 
+  const project = useMemo(() => {
+    return (
+      projectsState.projects.find(
+        (item) => item.id === projectsState.activeProjectId
+      ) ?? null
+    )
+  }, [projectsState])
+
+  const projectBar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Label className="text-xs font-medium uppercase text-muted-foreground">Project</Label>
+      <select
+        value={projectsState.activeProjectId ?? ""}
+        onChange={(event) => {
+          const nextId = event.target.value || null
+          setActiveProjectId(nextId)
+          setSelectedTileId(null)
+        }}
+        className="h-9 min-w-[180px] rounded-md border border-input bg-background px-3 text-sm"
+      >
+        {projectsState.projects.length === 0 ? (
+          <option value="">No projects</option>
+        ) : null}
+        {projectsState.projects.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.name}
+          </option>
+        ))}
+      </select>
+      <Button type="button" size="sm" onClick={() => setNewProjectOpen(true)}>
+        New Project
+      </Button>
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button type="button" size="sm" variant="outline" disabled={!project}>
+            Delete Project
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this project?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove the project and its saved tiles.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!project) return
+                await deleteAssetsForProject(project.id)
+                deleteProject(project.id)
+                setSelectedTileId(null)
+              }}
+            >
+              Delete Project
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {project ? (
+        <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+          {project.region}
+        </span>
+      ) : null}
+      <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New project</DialogTitle>
+            <DialogDescription>Create a catalogue project.</DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleCreateProject}>
+            <div className="space-y-2">
+              <Label htmlFor="dialog-project-name">Project name</Label>
+              <Input
+                id="dialog-project-name"
+                value={newProjectName}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                placeholder="WK30 AU"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="dialog-project-region">Region</Label>
+              <select
+                id="dialog-project-region"
+                value={newProjectRegion}
+                onChange={(event) => setNewProjectRegion(event.target.value as Region)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="AU">AU</option>
+                <option value="NZ">NZ</option>
+              </select>
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={!newProjectName.trim()}>
+                Create Project
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+
+  useEffect(() => {
+    saveProjectsState(projectsState)
+  }, [projectsState])
+
+  function setActiveProjectId(nextId: string | null) {
+    setProjectsState((prev) => ({
+      ...prev,
+      activeProjectId: nextId,
+    }))
+  }
+
+  function upsertProject(updated: CatalogueProject) {
+    setProjectsState((prev) => ({
+      ...prev,
+      projects: prev.projects.map((item) =>
+        item.id === updated.id ? updated : item
+      ),
+    }))
+  }
+
+  function addProject(newProject: CatalogueProject) {
+    setProjectsState((prev) => ({
+      activeProjectId: newProject.id,
+      projects: [...prev.projects, newProject],
+    }))
+  }
+
+  function deleteProject(projectId: string) {
+    setProjectsState((prev) => {
+      const projects = prev.projects.filter((item) => item.id !== projectId)
+      const activeProjectId =
+        prev.activeProjectId === projectId ? projects[0]?.id ?? null : prev.activeProjectId
+      return { projects, activeProjectId }
+    })
+  }
+
   async function getOcrImageBlobForTile(
     tile: Tile
   ): Promise<{ blob: Blob; used: "gray" | "color" } | null> {
@@ -352,13 +514,14 @@ export default function CatalogueBuilderPage() {
 
   function handleCreateProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const trimmedName = projectName.trim()
+    const trimmedName = newProjectName.trim()
     if (!trimmedName) return
 
-    const created = newProject(trimmedName)
-    saveProject(created)
-    setProject(created)
-    setProjectName("")
+    const created = createProject(trimmedName, newProjectRegion)
+    addProject(created)
+    setNewProjectName("")
+    setNewProjectRegion("AU")
+    setNewProjectOpen(false)
   }
 
   const tiles = project?.tiles ?? []
@@ -483,7 +646,7 @@ export default function CatalogueBuilderPage() {
     if (files.length === 0) return
 
     if (replaceExisting) {
-      await deleteImagesForTiles(project.tiles)
+      await deleteImagesForProject(project.id)
     }
 
     const totalSize = files.reduce((sum, file) => sum + file.size, 0)
@@ -496,6 +659,7 @@ export default function CatalogueBuilderPage() {
     )
 
     const tilesToAdd: Tile[] = []
+    const newImageIds: string[] = []
     for (const file of files) {
       const baseName = stripExtension(file.name)
       const rawId = sanitizeTileId(baseName)
@@ -507,9 +671,8 @@ export default function CatalogueBuilderPage() {
       }
       existingIds.add(uniqueId.toLowerCase())
 
-      const colorKey = `${project.id}:${uniqueId}:color`
-      const grayKey = `${project.id}:${uniqueId}:gray`
-      await putImage(colorKey, file)
+      const colorKey = await putImage(project.id, file.name, file)
+      newImageIds.push(colorKey)
       let grayBlob: Blob | null = null
       try {
         grayBlob = await createGrayBlob(file)
@@ -517,7 +680,22 @@ export default function CatalogueBuilderPage() {
         grayBlob = null
       }
       if (grayBlob) {
-        await putImage(grayKey, grayBlob)
+        const grayKey = await putImage(project.id, `${file.name} (gray)`, grayBlob)
+        newImageIds.push(grayKey)
+        tilesToAdd.push({
+          id: uniqueId,
+          tileNumber: uniqueId,
+          status: "todo",
+          notes: undefined,
+          dynamicLink: undefined,
+          extractedPLUs: undefined,
+          extractedPluFlags: undefined,
+          linkBuilderState: createEmptyLinkBuilderState(),
+          imageKey: colorKey,
+          grayImageKey: grayKey,
+          originalFileName: file.name,
+        })
+        continue
       }
       tilesToAdd.push({
         id: uniqueId,
@@ -529,19 +707,23 @@ export default function CatalogueBuilderPage() {
         extractedPluFlags: undefined,
         linkBuilderState: createEmptyLinkBuilderState(),
         imageKey: colorKey,
-        grayImageKey: grayBlob ? grayKey : undefined,
+        grayImageKey: undefined,
         originalFileName: file.name,
       })
     }
 
+    const nextTileImageIds = replaceExisting
+      ? newImageIds
+      : Array.from(new Set([...(project.tileImageIds ?? []), ...newImageIds]))
+
     const updated: CatalogueProject = {
       ...project,
       tiles: replaceExisting ? tilesToAdd : [...project.tiles, ...tilesToAdd],
+      tileImageIds: nextTileImageIds,
       updatedAt: new Date().toISOString(),
     }
 
-    saveProject(updated)
-    setProject(updated)
+    upsertProject(updated)
     setSelectedTileId(tilesToAdd[0]?.id ?? updated.tiles[0]?.id ?? null)
   }
 
@@ -579,6 +761,16 @@ export default function CatalogueBuilderPage() {
       setMatchScore(null)
       setMatchText("")
       setMatchPlus([])
+      if (project) {
+        const pdfId = await putAsset(project.id, "pdf", file.name, file)
+        const nextPdfIds = Array.from(new Set([...(project.pdfIds ?? []), pdfId]))
+        const updated: CatalogueProject = {
+          ...project,
+          pdfIds: nextPdfIds,
+          updatedAt: new Date().toISOString(),
+        }
+        upsertProject(updated)
+      }
       const buffer = await file.arrayBuffer()
       const doc = await loadPdfDocument(buffer)
       const page = await doc.getPage(1)
@@ -642,8 +834,7 @@ export default function CatalogueBuilderPage() {
       linkBuilderState: draftLinkState,
       extractedPluFlags: draftExtractedFlags,
     })
-    saveProject(updated)
-    setProject(updated)
+    upsertProject(updated)
   }
 
   async function runOcr() {
@@ -686,14 +877,12 @@ export default function CatalogueBuilderPage() {
             plus,
           },
         })
-        saveProject(updated)
-        setProject(updated)
+        upsertProject(updated)
       } else if (weakSuggestions.length > 0) {
         const updated = updateTile(project, selectedTile.id, {
           ocrSuggestions: weakSuggestions,
         })
-        saveProject(updated)
-        setProject(updated)
+        upsertProject(updated)
         toast.message("OCR uncertain. Suggestions saved.")
       } else {
         toast.message("No PLU candidates found.")
@@ -795,8 +984,7 @@ export default function CatalogueBuilderPage() {
         tiles: updatedTiles,
         updatedAt: new Date().toISOString(),
       }
-      saveProject(updatedProject)
-      setProject(updatedProject)
+      upsertProject(updatedProject)
       toast.success(
         `OCR complete: ${totalPluCount} PLUs across ${updatedTilesCount} tiles. Skipped ${skippedTilesCount}.`
       )
@@ -836,14 +1024,14 @@ export default function CatalogueBuilderPage() {
   async function confirmClearAll() {
     if (!project) return
     if (!window.confirm("Clear all tiles? This cannot be undone.")) return
-    await deleteImagesForTiles(project.tiles)
+    await deleteImagesForProject(project.id)
     const updated: CatalogueProject = {
       ...project,
       tiles: [],
+      tileImageIds: [],
       updatedAt: new Date().toISOString(),
     }
-    saveProject(updated)
-    setProject(updated)
+    upsertProject(updated)
     setSelectedTileId(null)
   }
 
@@ -890,6 +1078,7 @@ export default function CatalogueBuilderPage() {
             Create a catalogue project to get started.
           </p>
         </div>
+        {projectBar}
         <Card>
           <CardHeader>
             <CardTitle>New project</CardTitle>
@@ -900,12 +1089,24 @@ export default function CatalogueBuilderPage() {
                 <Label htmlFor="project-name">Project name</Label>
                 <Input
                   id="project-name"
-                  value={projectName}
-                  onChange={(event) => setProjectName(event.target.value)}
+                  value={newProjectName}
+                  onChange={(event) => setNewProjectName(event.target.value)}
                   placeholder="Summer catalogue 2026"
                 />
               </div>
-              <Button type="submit" disabled={!projectName.trim()}>
+              <div className="space-y-2">
+                <Label htmlFor="project-region">Region</Label>
+                <select
+                  id="project-region"
+                  value={newProjectRegion}
+                  onChange={(event) => setNewProjectRegion(event.target.value as Region)}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="AU">AU</option>
+                  <option value="NZ">NZ</option>
+                </select>
+              </div>
+              <Button type="submit" disabled={!newProjectName.trim()}>
                 Create project
               </Button>
             </form>
@@ -923,6 +1124,7 @@ export default function CatalogueBuilderPage() {
           Manage tiles for your catalogue project.
         </p>
       </div>
+      {projectBar}
       <Card>
         <CardHeader>
           <CardTitle>PDF Tile Matcher (POC)</CardTitle>

@@ -1247,7 +1247,7 @@ export default function PdfTileDetectionPage() {
                   : "Not loaded"}
               </p>
             </div>
-            <div className="space-y-3 min-w-0">
+            <div className="space-y-3 min-w-0 max-w-[100vh] mx-auto w-full">
               <div className="relative w-full min-w-0 rounded-md border border-border bg-muted/20 p-2">
                 <div className="relative w-full min-w-0">
                   <canvas

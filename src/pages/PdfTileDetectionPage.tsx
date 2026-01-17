@@ -62,6 +62,7 @@ export default function PdfTileDetectionPage() {
   const [selectedRectIndex, setSelectedRectIndex] = useState<number | null>(null)
   const [orderingFinished, setOrderingFinished] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [viewportCssSize, setViewportCssSize] = useState({ width: 0, height: 0 })
 
   const pdfRef = useRef<PDFDocumentProxy | null>(null)
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -262,7 +263,9 @@ export default function PdfTileDetectionPage() {
     if (!pdf || !canvas) {
       throw new Error("PDF not loaded")
     }
-    const page = await pdf.getPage(targetPage ?? pageNumber)
+    const requestedPage = targetPage ?? pageNumber
+    const safePage = Math.min(Math.max(requestedPage, 1), pdf.numPages)
+    const page = await pdf.getPage(safePage)
     const baseViewport = page.getViewport({ scale: 1 })
     const MAX_RENDER_H = 850
     const maxWidth = 1100
@@ -279,6 +282,7 @@ export default function PdfTileDetectionPage() {
     canvas.height = Math.floor(viewport.height * dpr)
     canvas.style.width = `${Math.floor(viewport.width)}px`
     canvas.style.height = `${Math.floor(viewport.height)}px`
+    setViewportCssSize({ width: Math.floor(viewport.width), height: Math.floor(viewport.height) })
     const ctx = canvas.getContext("2d")
     if (!ctx) {
       throw new Error("Canvas 2D context not available")
@@ -400,7 +404,7 @@ export default function PdfTileDetectionPage() {
       }
     }
 
-    if (selected) {
+    if (selected && !orderingMode) {
       if (rectConfigs[selectedRectIndex!]?.include ?? true) {
         const padding = rectConfigs[selectedRectIndex!]?.paddingOverride ?? rectPaddingPx
         const padded = getPaddedRect(selected, padding)
@@ -917,8 +921,9 @@ export default function PdfTileDetectionPage() {
     setPageNumber(entry.selectedPage)
     loadPageState(entry, entry.selectedPage)
     try {
-      await renderPage(entry.selectedPage)
-      drawOverlay(entry.pages[entry.selectedPage]?.boxes ?? [])
+      const safePage = Math.min(Math.max(entry.selectedPage, 1), doc.numPages)
+      await renderPage(safePage)
+      drawOverlay(entry.pages[safePage]?.boxes ?? [])
     } catch {
       toast.error("Failed to render page.")
     }
@@ -1275,19 +1280,27 @@ export default function PdfTileDetectionPage() {
             </div>
             <div className="space-y-3 min-w-0 max-w-[100vh] mx-auto w-full">
               <div className="relative w-full min-w-0 rounded-md border border-border bg-muted/20 p-2">
-                <div ref={renderHostRef} className="relative w-full min-w-0">
-                  <canvas ref={pdfCanvasRef} className="block" />
-                  <canvas
-                    ref={overlayCanvasRef}
-                    className="absolute left-0 top-0"
-                    style={{ cursor: overlayCursor }}
-                    onClick={handleOverlayClick}
-                    onContextMenu={handleOverlayContextMenu}
-                    onMouseDown={handleOverlayMouseDown}
-                    onMouseMove={handleOverlayMouseMove}
-                    onMouseUp={handleOverlayMouseUp}
-                    onMouseLeave={handleOverlayMouseUp}
-                  />
+                <div ref={renderHostRef} className="w-full flex justify-center">
+                  <div
+                    className="relative"
+                    style={{
+                      width: `${viewportCssSize.width}px`,
+                      height: `${viewportCssSize.height}px`,
+                    }}
+                  >
+                    <canvas ref={pdfCanvasRef} className="absolute left-0 top-0 block" />
+                    <canvas
+                      ref={overlayCanvasRef}
+                      className="absolute left-0 top-0 block"
+                      style={{ cursor: overlayCursor }}
+                      onClick={handleOverlayClick}
+                      onContextMenu={handleOverlayContextMenu}
+                      onMouseDown={handleOverlayMouseDown}
+                      onMouseMove={handleOverlayMouseMove}
+                      onMouseUp={handleOverlayMouseUp}
+                      onMouseLeave={handleOverlayMouseUp}
+                    />
+                  </div>
                 </div>
               </div>
             </div>

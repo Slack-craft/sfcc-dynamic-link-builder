@@ -141,45 +141,6 @@ function createEmptyExtractedFlags() {
   return Array.from({ length: MAX_PLUS_FIELDS }, () => false)
 }
 
-async function createGrayBlob(source: Blob) {
-  const image = new Image()
-  const imageLoaded = new Promise<void>((resolve, reject) => {
-    image.onload = () => resolve()
-    image.onerror = () => reject(new Error("Failed to load image"))
-  })
-  const objectUrl = URL.createObjectURL(source)
-  image.src = objectUrl
-  try {
-    await imageLoaded
-    const canvas = document.createElement("canvas")
-    canvas.width = image.width
-    canvas.height = image.height
-    const ctx = canvas.getContext("2d")
-    if (!ctx) {
-      return source
-    }
-
-    ctx.drawImage(image, 0, 0)
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-    const data = imageData.data
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i]
-      const g = data[i + 1]
-      const b = data[i + 2]
-      const lum = Math.round(0.299 * r + 0.587 * g + 0.114 * b)
-      data[i] = lum
-      data[i + 1] = lum
-      data[i + 2] = lum
-    }
-    ctx.putImageData(imageData, 0, 0)
-    return new Promise<Blob>((resolve) => {
-      canvas.toBlob((blob) => resolve(blob ?? source), "image/png")
-    })
-  } finally {
-    URL.revokeObjectURL(objectUrl)
-  }
-}
-
 async function upscaleForOcr(source: Blob, scale = OCR_SCALE) {
   const bmp = await createImageBitmap(source)
   const srcW = bmp.width
@@ -333,6 +294,8 @@ export default function CatalogueBuilderPage() {
   const [ocrAllStatus, setOcrAllStatus] = useState("")
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
+  const isUploadingImagesRef = useRef(false)
+  const lastUploadSignatureRef = useRef<string | null>(null)
 
   const project = useMemo(() => {
     return (
@@ -651,6 +614,12 @@ export default function CatalogueBuilderPage() {
     selectedTile?.grayImageKey,
   ])
 
+  function buildUploadSignature(files: File[]) {
+    return files
+      .map((file) => `${file.name}:${file.size}:${file.lastModified}`)
+      .join("|")
+  }
+
   async function createTilesFromFiles(fileList: FileList, replaceExisting: boolean) {
     if (!project) return
     const files = Array.from(fileList).sort((a, b) =>
@@ -658,44 +627,47 @@ export default function CatalogueBuilderPage() {
     )
 
     if (files.length === 0) return
-
-    if (replaceExisting) {
-      await deleteImagesForProject(project.id)
-    }
-
-    const totalSize = files.reduce((sum, file) => sum + file.size, 0)
-    if (totalSize > MAX_TOTAL_UPLOAD_BYTES) {
-      toast.warning("Large upload detected. localStorage may hit limits with big image sets.")
-    }
-
-    const existingIds = new Set(
-      (replaceExisting ? [] : project.tiles.map((tile) => tile.id)).map((id) => id.toLowerCase())
-    )
-
-    const tilesToAdd: Tile[] = []
-    const newImageIds: string[] = []
-    for (const file of files) {
-      const baseName = stripExtension(file.name)
-      const rawId = sanitizeTileId(baseName)
-      let uniqueId = rawId
-      let suffix = 2
-      while (existingIds.has(uniqueId.toLowerCase())) {
-        uniqueId = `${rawId}-${suffix}`
-        suffix += 1
+    const uploadSignature = buildUploadSignature(files)
+    if (isUploadingImagesRef.current) {
+      if (lastUploadSignatureRef.current === uploadSignature) {
+        return
       }
-      existingIds.add(uniqueId.toLowerCase())
+      return
+    }
+    isUploadingImagesRef.current = true
+    lastUploadSignatureRef.current = uploadSignature
 
-      const colorKey = await putImage(project.id, file.name, file)
-      newImageIds.push(colorKey)
-      let grayBlob: Blob | null = null
-      try {
-        grayBlob = await createGrayBlob(file)
-      } catch {
-        grayBlob = null
+    try {
+      if (replaceExisting) {
+        await deleteImagesForProject(project.id)
       }
-      if (grayBlob) {
-        const grayKey = await putImage(project.id, `${file.name} (gray)`, grayBlob)
-        newImageIds.push(grayKey)
+
+      const totalSize = files.reduce((sum, file) => sum + file.size, 0)
+      if (totalSize > MAX_TOTAL_UPLOAD_BYTES) {
+        toast.warning("Large upload detected. localStorage may hit limits with big image sets.")
+      }
+
+      const existingIds = new Set(
+        (replaceExisting ? [] : project.tiles.map((tile) => tile.id)).map((id) =>
+          id.toLowerCase()
+        )
+      )
+
+      const tilesToAdd: Tile[] = []
+      const newImageIds: string[] = []
+      for (const file of files) {
+        const baseName = stripExtension(file.name)
+        const rawId = sanitizeTileId(baseName)
+        let uniqueId = rawId
+        let suffix = 2
+        while (existingIds.has(uniqueId.toLowerCase())) {
+          uniqueId = `${rawId}-${suffix}`
+          suffix += 1
+        }
+        existingIds.add(uniqueId.toLowerCase())
+
+        const colorKey = await putImage(project.id, file.name, file)
+        newImageIds.push(colorKey)
         tilesToAdd.push({
           id: uniqueId,
           tileNumber: uniqueId,
@@ -706,39 +678,39 @@ export default function CatalogueBuilderPage() {
           extractedPluFlags: undefined,
           linkBuilderState: createEmptyLinkBuilderState(),
           imageKey: colorKey,
-          grayImageKey: grayKey,
+          grayImageKey: undefined,
           originalFileName: file.name,
         })
-        continue
       }
-      tilesToAdd.push({
-        id: uniqueId,
-        tileNumber: uniqueId,
-        status: "todo",
-        notes: undefined,
-        dynamicLink: undefined,
-        extractedPLUs: undefined,
-        extractedPluFlags: undefined,
-        linkBuilderState: createEmptyLinkBuilderState(),
-        imageKey: colorKey,
-        grayImageKey: undefined,
-        originalFileName: file.name,
-      })
+
+      const nextImageAssetIds = Array.from(
+        new Set([
+          ...(replaceExisting ? [] : project.imageAssetIds ?? []),
+          ...newImageIds,
+        ])
+      )
+
+      const updated: CatalogueProject = {
+        ...project,
+        tiles: replaceExisting ? tilesToAdd : [...project.tiles, ...tilesToAdd],
+        imageAssetIds: nextImageAssetIds,
+        updatedAt: new Date().toISOString(),
+      }
+
+      upsertProject(updated)
+      if (import.meta.env.DEV) {
+        console.log("[setup] image upload", {
+          files: files.length,
+          newAssetIds: newImageIds.length,
+          imageAssetIds: updated.imageAssetIds.length,
+          tiles: updated.tiles.length,
+        })
+      }
+      setSelectedTileId(tilesToAdd[0]?.id ?? updated.tiles[0]?.id ?? null)
+    } finally {
+      isUploadingImagesRef.current = false
+      lastUploadSignatureRef.current = null
     }
-
-    const nextImageAssetIds = replaceExisting
-      ? newImageIds
-      : Array.from(new Set([...(project.imageAssetIds ?? []), ...newImageIds]))
-
-    const updated: CatalogueProject = {
-      ...project,
-      tiles: replaceExisting ? tilesToAdd : [...project.tiles, ...tilesToAdd],
-      imageAssetIds: nextImageAssetIds,
-      updatedAt: new Date().toISOString(),
-    }
-
-    upsertProject(updated)
-    setSelectedTileId(tilesToAdd[0]?.id ?? updated.tiles[0]?.id ?? null)
   }
 
   async function handleSetupPdfUpload(event: React.ChangeEvent<HTMLInputElement>) {
@@ -1151,18 +1123,34 @@ export default function CatalogueBuilderPage() {
                 onChange={handleSetupImageUpload}
               />
               <p className="text-xs text-muted-foreground">
-                {project.imageAssetIds.length} image{project.imageAssetIds.length === 1 ? "" : "s"} uploaded
+                {new Set(project.imageAssetIds).size} image{new Set(project.imageAssetIds).size === 1 ? "" : "s"} uploaded
               </p>
             </div>
           </CardContent>
         </Card>
       ) : null}
-      {project.stage === "pdf-detect" ? <PdfTileDetectionPage /> : null}
+      {project.stage === "pdf-detect" ? (
+        <PdfTileDetectionPage
+          key={project.id}
+          project={project}
+          onProjectChange={upsertProject}
+        />
+      ) : null}
       {project.stage === "catalogue" ? (
-      <Card>
-        <CardHeader>
-          <CardTitle>{project.name}</CardTitle>
-        </CardHeader>
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>{project.name}</CardTitle>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setProjectStage("pdf-detect")}
+              >
+                Back to PDF detection
+              </Button>
+            </div>
+          </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">

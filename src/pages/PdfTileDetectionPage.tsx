@@ -18,7 +18,12 @@ import {
 } from "@/components/ui/alert-dialog"
 import { detectTilesInCanvas } from "@/tools/catalogue-builder/pdfTileDetect"
 import { loadOpenCv } from "@/lib/loadOpenCv"
-import { clearPdfStore, getPdf, putPdf } from "@/lib/pdfStore"
+import { deleteAsset, getAsset, listAssets, putAsset } from "@/lib/assetStore"
+import {
+  loadProjectsState,
+  saveProjectsState,
+} from "@/tools/catalogue-builder/catalogueProjectsStorage"
+import type { CatalogueProject } from "@/tools/catalogue-builder/catalogueTypes"
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api"
 import type { PageViewport } from "pdfjs-dist/types/src/display/display_utils"
 import * as pdfjsLib from "pdfjs-dist"
@@ -29,7 +34,25 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString()
 
-export default function PdfTileDetectionPage() {
+type PdfTileDetectionPageProps = {
+  project?: CatalogueProject
+  onProjectChange?: (project: CatalogueProject) => void
+}
+
+export default function PdfTileDetectionPage({
+  project: externalProject,
+  onProjectChange,
+}: PdfTileDetectionPageProps) {
+  const [projectsState, setProjectsState] = useState(() => loadProjectsState())
+  const activeProject = useMemo(() => {
+    return (
+      projectsState.projects.find(
+        (item) => item.id === projectsState.activeProjectId
+      ) ?? null
+    )
+  }, [projectsState])
+  const currentProject = externalProject ?? activeProject
+
   const [pageNumber, setPageNumber] = useState(1)
   const [pageCount, setPageCount] = useState(1)
   const [pdfStatus, setPdfStatus] = useState("")
@@ -107,9 +130,29 @@ export default function PdfTileDetectionPage() {
     missing?: boolean
   }
 
-  const STORAGE_KEY = "sca_pdf_tile_project_v1"
   const [pdfs, setPdfs] = useState<PdfEntry[]>([])
   const [selectedPdfId, setSelectedPdfId] = useState<string | null>(null)
+
+  function updateActiveProject(updater: (project: CatalogueProject) => CatalogueProject) {
+    if (externalProject && onProjectChange) {
+      const updated = updater(externalProject)
+      onProjectChange(updated)
+      return
+    }
+    setProjectsState((prev) => {
+      const project = prev.projects.find(
+        (item) => item.id === prev.activeProjectId
+      )
+      if (!project) return prev
+      const updated = updater(project)
+      const projects = prev.projects.map((item) =>
+        item.id === updated.id ? updated : item
+      )
+      const next = { ...prev, projects }
+      saveProjectsState(next)
+      return next
+    })
+  }
 
   const areaList = useMemo(
     () =>
@@ -233,26 +276,24 @@ export default function PdfTileDetectionPage() {
   async function handlePdfChange(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? [])
     if (files.length === 0) return
+    if (!currentProject) {
+      toast.error("Select a project first.")
+      event.target.value = ""
+      return
+    }
     const newEntries: PdfEntry[] = []
+    const newPdfIds: string[] = []
     for (const file of files) {
       console.log("PDF selected", file.name, file.size)
       try {
-        const fileId = `${file.name}::${file.size}::${file.lastModified}`
-        await putPdf({
-          fileId,
-          name: file.name,
-          blob: file,
-          size: file.size,
-          lastModified: file.lastModified,
-          createdAt: Date.now(),
-        })
+        const fileId = await putAsset(currentProject.id, "pdf", file.name, file)
+        newPdfIds.push(fileId)
         const buffer = await file.arrayBuffer()
         const doc = await pdfjsLib.getDocument({ data: buffer }).promise
         const pageNumberFromName = parsePageNumberFromName(file.name)
-        const id = crypto.randomUUID()
-        pdfDocMapRef.current.set(id, doc)
+        pdfDocMapRef.current.set(fileId, doc)
         newEntries.push({
-          id,
+          id: fileId,
           name: file.name,
           pageCount: doc.numPages,
           selectedPage: pageNumberFromName ?? 1,
@@ -266,6 +307,16 @@ export default function PdfTileDetectionPage() {
 
     if (newEntries.length > 0) {
       setPdfs((prev) => [...prev, ...newEntries])
+      updateActiveProject((project) => {
+        const nextPdfIds = Array.from(
+          new Set([...(project.pdfAssetIds ?? []), ...newPdfIds])
+        )
+        return {
+          ...project,
+          pdfAssetIds: nextPdfIds,
+          updatedAt: new Date().toISOString(),
+        }
+      })
       if (!selectedPdfId) {
         const first = newEntries[0]
         setSelectedPdfId(first.id)
@@ -928,7 +979,63 @@ export default function PdfTileDetectionPage() {
     console.log("Committed detected tiles", committed)
   }
 
+  function isPageDataOrdered(data?: PageData) {
+    if (!data) return false
+    if (data.orderingFinished) return true
+    const includedIndexes = data.boxes
+      .map((_, index) => index)
+      .filter((index) => data.rectConfigs[index]?.include ?? true)
+    if (includedIndexes.length === 0) return false
+    return includedIndexes.every(
+      (index) => data.rectConfigs[index]?.orderIndex !== undefined
+    )
+  }
+
+  function buildExportMap() {
+    return pdfs.map((entry) => ({
+      pdfId: entry.id,
+      name: entry.name,
+      pages: Object.entries(entry.pages).map(([pageKey, data]) => ({
+        pageNumber: Number(pageKey),
+        boxes: data.boxes
+          .map((box, index) => ({
+            xPdf: box.xPdf,
+            yPdf: box.yPdf,
+            wPdf: box.wPdf,
+            hPdf: box.hPdf,
+            include: data.rectConfigs[index]?.include ?? true,
+            orderIndex: data.rectConfigs[index]?.orderIndex,
+          }))
+          .filter((item) => item.include),
+      })),
+    }))
+  }
+
+  function handleFinishDetection() {
+    if (!currentProject) return
+    const hasUnordered = pdfs.some((entry) =>
+      Object.values(entry.pages).some((data) => !isPageDataOrdered(data))
+    )
+    if (hasUnordered) {
+      const proceed = window.confirm(
+        "Some included tiles are not ordered. Finish detection anyway?"
+      )
+      if (!proceed) return
+    }
+    const exportMap = buildExportMap()
+    updateActiveProject((project) => ({
+      ...project,
+      pdfDetection: {
+        ...(project.pdfDetection ?? {}),
+        export: exportMap,
+      },
+      stage: "catalogue",
+      updatedAt: new Date().toISOString(),
+    }))
+  }
+
   async function clearPdfState() {
+    if (!currentProject) return
     if (persistTimerRef.current !== null) {
       window.clearTimeout(persistTimerRef.current)
       persistTimerRef.current = null
@@ -957,8 +1064,14 @@ export default function PdfTileDetectionPage() {
     setSelectedRectIndex(null)
     setPageRendered(false)
     setPdfStatus("")
-    localStorage.removeItem(STORAGE_KEY)
-    await clearPdfStore()
+    updateActiveProject((project) => ({
+      ...project,
+      pdfAssetIds: [],
+      pdfDetection: {},
+      updatedAt: new Date().toISOString(),
+    }))
+    const pdfAssets = await listAssets(currentProject.id, "pdf")
+    await Promise.all(pdfAssets.map((asset) => deleteAsset(asset.assetId)))
     const canvas = pdfCanvasRef.current
     if (canvas) {
       const ctx = canvas.getContext("2d")
@@ -1057,6 +1170,7 @@ export default function PdfTileDetectionPage() {
 
   useEffect(() => {
     if (!hydrationDoneRef.current) return
+    if (!currentProject) return
     if (persistTimerRef.current !== null) {
       window.clearTimeout(persistTimerRef.current)
     }
@@ -1069,7 +1183,14 @@ export default function PdfTileDetectionPage() {
         pages,
         fileId,
       }))
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toPersist))
+      updateActiveProject((project) => ({
+        ...project,
+        pdfDetection: {
+          ...(project.pdfDetection ?? {}),
+          pdfs: toPersist,
+        },
+        updatedAt: new Date().toISOString(),
+      }))
       persistTimerRef.current = null
     }, 300)
     return () => {
@@ -1077,63 +1198,90 @@ export default function PdfTileDetectionPage() {
         window.clearTimeout(persistTimerRef.current)
       }
     }
-  }, [pdfs])
+  }, [pdfs, currentProject?.id])
 
   useEffect(() => {
     let cancelled = false
     async function hydrateProject() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY)
-        if (!raw) {
-          hydrationDoneRef.current = true
-          return
+      hydrationDoneRef.current = false
+      pdfRef.current = null
+      pdfDocMapRef.current.clear()
+      setPdfs([])
+      setSelectedPdfId(null)
+      if (!currentProject) {
+        hydrationDoneRef.current = true
+        return
+      }
+      const detectionState = (currentProject.pdfDetection ?? {}) as {
+        pdfs?: PdfEntry[]
+      }
+      const existingEntries = Array.isArray(detectionState.pdfs)
+        ? detectionState.pdfs
+        : []
+      const existingByFileId = new Map<string, PdfEntry>()
+      existingEntries.forEach((entry) => {
+        if (entry.fileId) {
+          existingByFileId.set(entry.fileId, entry)
         }
-        const parsed = JSON.parse(raw)
-        if (!Array.isArray(parsed)) {
-          hydrationDoneRef.current = true
-          return
-        }
-        const entries = parsed as PdfEntry[]
-        const hydrated: PdfEntry[] = []
-        for (const entry of entries) {
-          if (!entry.fileId) {
-            hydrated.push({ ...entry, missing: true })
+      })
+      const hydrated: PdfEntry[] = []
+      for (const assetId of currentProject.pdfAssetIds) {
+        const existing = existingByFileId.get(assetId)
+        try {
+          const stored = await getAsset(assetId)
+          if (!stored || stored.type !== "pdf") {
+            hydrated.push({
+              id: assetId,
+              name: existing?.name ?? stored?.name ?? "Missing PDF",
+              pageCount: existing?.pageCount ?? 1,
+              selectedPage: existing?.selectedPage ?? 1,
+              pages: existing?.pages ?? {},
+              fileId: assetId,
+              missing: true,
+            })
             continue
           }
-          try {
-            const stored = await getPdf(entry.fileId)
-            if (!stored) {
-              hydrated.push({ ...entry, missing: true })
-              continue
-            }
-            const buffer = await stored.blob.arrayBuffer()
-            const doc = await pdfjsLib.getDocument({ data: buffer }).promise
-            pdfDocMapRef.current.set(entry.id, doc)
-            hydrated.push({ ...entry, missing: false })
-          } catch {
-            hydrated.push({ ...entry, missing: true })
-          }
-        }
-        if (cancelled) return
-        setPdfs(hydrated)
-        const first = hydrated[0]
-        if (first) {
-          setSelectedPdfId(first.id)
-          if (pdfDocMapRef.current.has(first.id)) {
-            await handleSelectPdf(first)
-          }
-        }
-      } finally {
-        if (!cancelled) {
-          hydrationDoneRef.current = true
+          const buffer = await stored.blob.arrayBuffer()
+          const doc = await pdfjsLib.getDocument({ data: buffer }).promise
+          pdfDocMapRef.current.set(assetId, doc)
+          const pageNumberFromName = parsePageNumberFromName(stored.name)
+          hydrated.push({
+            id: assetId,
+            name: stored.name,
+            pageCount: doc.numPages,
+            selectedPage: existing?.selectedPage ?? pageNumberFromName ?? 1,
+            pages: existing?.pages ?? {},
+            fileId: assetId,
+            missing: false,
+          })
+        } catch {
+          hydrated.push({
+            id: assetId,
+            name: existing?.name ?? "Missing PDF",
+            pageCount: existing?.pageCount ?? 1,
+            selectedPage: existing?.selectedPage ?? 1,
+            pages: existing?.pages ?? {},
+            fileId: assetId,
+            missing: true,
+          })
         }
       }
+      if (cancelled) return
+      setPdfs(hydrated)
+      const first = hydrated[0]
+      if (first) {
+        setSelectedPdfId(first.id)
+        if (pdfDocMapRef.current.has(first.id)) {
+          await handleSelectPdf(first)
+        }
+      }
+      hydrationDoneRef.current = true
     }
     void hydrateProject()
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [currentProject?.id, currentProject?.pdfAssetIds])
 
   const selectedPdfEntry = useMemo(
     () => pdfs.find((entry) => entry.id === selectedPdfId) ?? null,
@@ -1173,6 +1321,17 @@ export default function PdfTileDetectionPage() {
     const entry = pdfs[index]
     if (!entry) return
     await handleSelectPdf(entry)
+  }
+
+  if (!currentProject) {
+    return (
+      <div className="space-y-2">
+        <h2 className="text-lg font-semibold">PDF Tile Detection (POC)</h2>
+        <p className="text-sm text-muted-foreground">
+          Select a project to view its PDF detection data.
+        </p>
+      </div>
+    )
   }
 
   return (
@@ -1390,6 +1549,9 @@ export default function PdfTileDetectionPage() {
               </div>
               <Button type="button" variant="secondary" onClick={handleCommitDetected} disabled={orderedIncluded.length === 0}>
                 Commit detected tiles
+              </Button>
+              <Button type="button" onClick={handleFinishDetection} disabled={pdfs.length === 0}>
+                Finish detection
               </Button>
               {orderingMode ? (
                 <div className="space-y-2">

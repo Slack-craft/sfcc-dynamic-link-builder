@@ -58,6 +58,7 @@ export default function PdfTileDetectionPage() {
   const listItemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const pdfDocMapRef = useRef<Map<string, PDFDocumentProxy>>(new Map())
   const isSyncingRef = useRef(false)
+  const isAutoDetectingRef = useRef(false)
   const resizeStateRef = useRef<{
     index: number
     handle: string
@@ -571,6 +572,23 @@ export default function PdfTileDetectionPage() {
     }
   }
 
+  async function runAutoDetectIfNeeded(entry: PdfEntry | null) {
+    if (!pageRendered) return
+    if (!entry) return
+    if (detecting || rendering) return
+    if (isAutoDetectingRef.current) return
+
+    const pageData = entry.pages[entry.selectedPage]
+    if (pageData && pageData.boxes && pageData.boxes.length > 0) return
+
+    isAutoDetectingRef.current = true
+    try {
+      await handleDetectTiles()
+    } finally {
+      isAutoDetectingRef.current = false
+    }
+  }
+
   async function handleLoadOpenCv() {
     setOpenCvStatus("loading")
     setOpenCvError(null)
@@ -732,7 +750,7 @@ export default function PdfTileDetectionPage() {
     }
   }
 
-  function handleSelectPdf(entry: PdfEntry) {
+  async function handleSelectPdf(entry: PdfEntry) {
     syncCurrentPdfState()
     setSelectedPdfId(entry.id)
     const doc = pdfDocMapRef.current.get(entry.id)
@@ -741,6 +759,12 @@ export default function PdfTileDetectionPage() {
     setPageCount(entry.pageCount)
     setPageNumber(entry.selectedPage)
     loadPageState(entry, entry.selectedPage)
+    try {
+      await renderPage()
+      drawOverlay(entry.pages[entry.selectedPage]?.boxes ?? [])
+    } catch {
+      toast.error("Failed to render page.")
+    }
   }
 
   function syncCurrentPdfState() {
@@ -814,6 +838,10 @@ export default function PdfTileDetectionPage() {
     [pdfs, selectedPdfId]
   )
 
+  useEffect(() => {
+    void runAutoDetectIfNeeded(selectedPdfEntry)
+  }, [pageRendered, selectedPdfId, pageNumber, selectedPdfEntry?.pages])
+
   const isPageOrdered = useMemo(() => {
     if (orderingFinished) return true
     const includedIndexes = boxes
@@ -882,6 +910,27 @@ export default function PdfTileDetectionPage() {
                     })
                   )}
                 </div>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button type="button" variant="destructive">
+                      Clear PDFs
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Clear all PDF uploads?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will remove all uploaded PDFs and detection data from this tool.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={clearPdfState}>
+                        Clear PDFs
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
               <div className="space-y-2">
                 <Label>Page number</Label>
@@ -959,7 +1008,7 @@ export default function PdfTileDetectionPage() {
                 />
               </div>
               <Button type="button" onClick={handleDetectTiles} disabled={detecting || !pageRendered}>
-                {detecting ? "Detecting..." : "Detect tiles"}
+                {detecting ? "Detecting..." : "Re-detect tiles"}
               </Button>
               <div className="text-xs text-muted-foreground">
                 Page status: {boxes.length > 0 ? "Detected" : "No detections"}  {" "}

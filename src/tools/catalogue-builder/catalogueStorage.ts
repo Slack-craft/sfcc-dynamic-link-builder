@@ -8,8 +8,16 @@ function isCatalogueProject(value: unknown): value is CatalogueProject {
   return (
     typeof project.id === "string" &&
     typeof project.name === "string" &&
+    (project.region === "AU" || project.region === "NZ") &&
+    (project.stage === "setup" ||
+      project.stage === "pdf-detect" ||
+      project.stage === "catalogue") &&
     typeof project.createdAt === "string" &&
     typeof project.updatedAt === "string" &&
+    Array.isArray(project.imageAssetIds) &&
+    Array.isArray(project.pdfAssetIds) &&
+    typeof project.detectionMaps === "object" &&
+    typeof project.pdfDetection === "object" &&
     Array.isArray(project.tiles)
   )
 }
@@ -34,8 +42,14 @@ export function newProject(name: string): CatalogueProject {
   return {
     id: crypto.randomUUID(),
     name,
+    region: "AU",
+    stage: "catalogue",
     createdAt: now,
     updatedAt: now,
+    imageAssetIds: [],
+    pdfAssetIds: [],
+    detectionMaps: {},
+    pdfDetection: {},
     tiles: [],
   }
 }

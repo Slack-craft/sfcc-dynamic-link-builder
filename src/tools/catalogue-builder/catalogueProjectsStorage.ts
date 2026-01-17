@@ -7,20 +7,59 @@ export type CatalogueProjectsState = {
 
 const STORAGE_KEY = "sca_catalogue_projects_v1"
 
-function isProject(value: unknown): value is CatalogueProject {
-  if (!value || typeof value !== "object") return false
-  const project = value as CatalogueProject
-  return (
-    typeof project.id === "string" &&
-    typeof project.name === "string" &&
-    (project.region === "AU" || project.region === "NZ") &&
-    typeof project.createdAt === "string" &&
-    typeof project.updatedAt === "string" &&
-    Array.isArray(project.tiles) &&
-    Array.isArray(project.tileImageIds) &&
-    Array.isArray(project.pdfIds) &&
-    typeof project.detectionMaps === "object"
-  )
+function normalizeProject(value: unknown): CatalogueProject | null {
+  if (!value || typeof value !== "object") return null
+  const project = value as CatalogueProject & {
+    tileImageIds?: string[]
+    pdfIds?: string[]
+  }
+  if (
+    typeof project.id !== "string" ||
+    typeof project.name !== "string" ||
+    (project.region !== "AU" && project.region !== "NZ") ||
+    typeof project.createdAt !== "string" ||
+    typeof project.updatedAt !== "string" ||
+    !Array.isArray(project.tiles)
+  ) {
+    return null
+  }
+
+  const stage =
+    project.stage === "setup" ||
+    project.stage === "pdf-detect" ||
+    project.stage === "catalogue"
+      ? project.stage
+      : "catalogue"
+  const imageAssetIds = Array.isArray(project.imageAssetIds)
+    ? project.imageAssetIds
+    : Array.isArray(project.tileImageIds)
+      ? project.tileImageIds
+      : []
+  const pdfAssetIds = Array.isArray(project.pdfAssetIds)
+    ? project.pdfAssetIds
+    : Array.isArray(project.pdfIds)
+      ? project.pdfIds
+      : []
+
+  return {
+    id: project.id,
+    name: project.name,
+    region: project.region,
+    stage,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    imageAssetIds,
+    pdfAssetIds,
+    detectionMaps:
+      project.detectionMaps && typeof project.detectionMaps === "object"
+        ? project.detectionMaps
+        : {},
+    pdfDetection:
+      project.pdfDetection && typeof project.pdfDetection === "object"
+        ? project.pdfDetection
+        : {},
+    tiles: project.tiles,
+  }
 }
 
 export function loadProjectsState(): CatalogueProjectsState {
@@ -31,7 +70,9 @@ export function loadProjectsState(): CatalogueProjectsState {
     if (!parsed || !Array.isArray(parsed.projects)) {
       return { activeProjectId: null, projects: [] }
     }
-    const projects = parsed.projects.filter(isProject)
+    const projects = parsed.projects
+      .map((item) => normalizeProject(item))
+      .filter((item): item is CatalogueProject => item !== null)
     const activeProjectId =
       typeof parsed.activeProjectId === "string" ? parsed.activeProjectId : null
     return { activeProjectId, projects }
@@ -50,11 +91,13 @@ export function createProject(name: string, region: Region): CatalogueProject {
     id: crypto.randomUUID(),
     name,
     region,
+    stage: "setup",
     createdAt: now,
     updatedAt: now,
-    tileImageIds: [],
-    pdfIds: [],
+    imageAssetIds: [],
+    pdfAssetIds: [],
     detectionMaps: {},
+    pdfDetection: {},
     tiles: [],
   }
 }

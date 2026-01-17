@@ -26,19 +26,25 @@ export type Tile = {
 
 export type Region = "AU" | "NZ"
 
+export type ProjectStage = "setup" | "pdf-detect" | "catalogue"
+
 export type DetectionMaps = Record<
   string,
   Record<string, { x: number; y: number; width: number; height: number; order: number }[]>
 >
 
+export type PdfDetectionState = Record<string, unknown>
+
 export type CatalogueProject = {
   id: string
   name: string
   region: Region
+  stage: ProjectStage
   createdAt: string
   updatedAt: string
-  tileImageIds: string[]
-  pdfIds: string[]
+  imageAssetIds: string[]
+  pdfAssetIds: string[]
   detectionMaps: DetectionMaps
+  pdfDetection: PdfDetectionState
   tiles: Tile[]
 }

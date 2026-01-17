@@ -35,23 +35,19 @@ import {
 } from "@/tools/catalogue-builder/catalogueProjectsStorage"
 import { clearImagesForProject, getImage, putImage } from "@/tools/catalogue-builder/imageStore"
 import { deleteAssetsForProject, putAsset } from "@/lib/assetStore"
-import {
-  extractPlusFromText,
-  extractTextInRect,
-  loadPdfDocument,
-  matchTileInPage,
-  renderPdfPageToCanvas,
-} from "@/tools/catalogue-builder/pdfTileMatcher"
+import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
+ 
 import type {
   CatalogueProject,
+  ProjectStage,
   Region,
   Tile,
   TileStatus,
 } from "@/tools/catalogue-builder/catalogueTypes"
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
-import type { PDFPageProxy } from "pdfjs-dist/types/src/display/api"
 
 const MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
+const PDF_DETECTION_STORAGE_KEY = "sca_pdf_tile_project_v1"
 const PLU_REGEX = /\b(?:\d\s*){5,8}\b/g
 const MAX_PLUS_FIELDS = 20
 const OCR_CONFIDENCE_MIN = 60
@@ -287,20 +283,28 @@ async function deleteImagesForProject(projectId: string) {
   await clearImagesForProject(projectId)
 }
 
-function collectTileImageIds(tiles: Tile[]) {
-  const ids: string[] = []
-  for (const tile of tiles) {
-    if (tile.imageKey) ids.push(tile.imageKey)
-    if (tile.grayImageKey) ids.push(tile.grayImageKey)
-    if (tile.ocrImageKey) ids.push(tile.ocrImageKey)
-  }
-  return ids
-}
-
 function buildPlusFromCandidates(candidates: string[]) {
   const plus = Array.from({ length: MAX_PLUS_FIELDS }, (_, i) => candidates[i] ?? "")
   const extractedFlags = Array.from({ length: MAX_PLUS_FIELDS }, (_, i) => i < candidates.length)
   return { plus, extractedFlags }
+}
+
+function readPdfDetectionFromStorage(): Record<string, unknown> {
+  const raw = localStorage.getItem(PDF_DETECTION_STORAGE_KEY)
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === "object") {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return {}
+}
+
+function writePdfDetectionToStorage(payload: Record<string, unknown>) {
+  localStorage.setItem(PDF_DETECTION_STORAGE_KEY, JSON.stringify(payload))
 }
 
 export default function CatalogueBuilderPage() {
@@ -327,17 +331,6 @@ export default function CatalogueBuilderPage() {
   const [ocrStatus, setOcrStatus] = useState("")
   const [ocrAllRunning, setOcrAllRunning] = useState(false)
   const [ocrAllStatus, setOcrAllStatus] = useState("")
-  const [pdfFileName, setPdfFileName] = useState("")
-  const [tileImageName, setTileImageName] = useState("")
-  const [matchScore, setMatchScore] = useState<number | null>(null)
-  const [matchRect, setMatchRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
-  const [matchText, setMatchText] = useState("")
-  const [matchPlus, setMatchPlus] = useState<string[]>([])
-  const [matching, setMatching] = useState(false)
-  const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
-  const pdfPageRef = useRef<PDFPageProxy | null>(null)
-  const pdfViewportRef = useRef<{ transform: number[] } | null>(null)
-  const tileImageBlobRef = useRef<Blob | null>(null)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -348,6 +341,11 @@ export default function CatalogueBuilderPage() {
       ) ?? null
     )
   }, [projectsState])
+
+  useEffect(() => {
+    if (!project || project.stage !== "pdf-detect") return
+    writePdfDetectionToStorage(project.pdfDetection ?? {})
+  }, [project?.id, project?.stage, project?.pdfDetection])
 
   const projectBar = (
     <div className="flex flex-wrap items-center gap-2">
@@ -529,6 +527,22 @@ export default function CatalogueBuilderPage() {
     () => tiles.find((tile) => tile.id === selectedTileId) ?? null,
     [tiles, selectedTileId]
   )
+
+  function setProjectStage(nextStage: ProjectStage) {
+    if (!project) return
+    const nextProject: CatalogueProject = {
+      ...project,
+      stage: nextStage,
+      updatedAt: new Date().toISOString(),
+    }
+    if (nextStage === "pdf-detect") {
+      writePdfDetectionToStorage(nextProject.pdfDetection ?? {})
+    }
+    if (nextStage === "catalogue") {
+      nextProject.pdfDetection = readPdfDetectionFromStorage()
+    }
+    upsertProject(nextProject)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -712,19 +726,47 @@ export default function CatalogueBuilderPage() {
       })
     }
 
-    const nextTileImageIds = replaceExisting
+    const nextImageAssetIds = replaceExisting
       ? newImageIds
-      : Array.from(new Set([...(project.tileImageIds ?? []), ...newImageIds]))
+      : Array.from(new Set([...(project.imageAssetIds ?? []), ...newImageIds]))
 
     const updated: CatalogueProject = {
       ...project,
       tiles: replaceExisting ? tilesToAdd : [...project.tiles, ...tilesToAdd],
-      tileImageIds: nextTileImageIds,
+      imageAssetIds: nextImageAssetIds,
       updatedAt: new Date().toISOString(),
     }
 
     upsertProject(updated)
     setSelectedTileId(tilesToAdd[0]?.id ?? updated.tiles[0]?.id ?? null)
+  }
+
+  async function handleSetupPdfUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    if (!project) return
+    const files = event.target.files
+    if (!files || files.length === 0) return
+    const newPdfIds: string[] = []
+    for (const file of Array.from(files)) {
+      const pdfId = await putAsset(project.id, "pdf", file.name, file)
+      newPdfIds.push(pdfId)
+    }
+    const nextPdfIds = Array.from(
+      new Set([...(project.pdfAssetIds ?? []), ...newPdfIds])
+    )
+    const updated: CatalogueProject = {
+      ...project,
+      pdfAssetIds: nextPdfIds,
+      updatedAt: new Date().toISOString(),
+    }
+    upsertProject(updated)
+    event.target.value = ""
+  }
+
+  function handleSetupImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files
+    if (!files || files.length === 0) return
+    void createTilesFromFiles(files, false)
+    event.target.value = ""
   }
 
   function handleUploadChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -750,78 +792,6 @@ export default function CatalogueBuilderPage() {
 
   function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault()
-  }
-
-  async function handlePdfUpload(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    try {
-      setPdfFileName(file.name)
-      setMatchRect(null)
-      setMatchScore(null)
-      setMatchText("")
-      setMatchPlus([])
-      if (project) {
-        const pdfId = await putAsset(project.id, "pdf", file.name, file)
-        const nextPdfIds = Array.from(new Set([...(project.pdfIds ?? []), pdfId]))
-        const updated: CatalogueProject = {
-          ...project,
-          pdfIds: nextPdfIds,
-          updatedAt: new Date().toISOString(),
-        }
-        upsertProject(updated)
-      }
-      const buffer = await file.arrayBuffer()
-      const doc = await loadPdfDocument(buffer)
-      const page = await doc.getPage(1)
-      const canvas = pdfCanvasRef.current
-      if (!canvas) {
-        throw new Error("PDF canvas missing")
-      }
-      const viewport = await renderPdfPageToCanvas(page, canvas, 1.8)
-      pdfPageRef.current = page
-      pdfViewportRef.current = viewport
-    } catch {
-      toast.error("Failed to load PDF.")
-    } finally {
-      event.target.value = ""
-    }
-  }
-
-  function handleTileImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    tileImageBlobRef.current = file
-    setTileImageName(file.name)
-    setMatchRect(null)
-    setMatchScore(null)
-    setMatchText("")
-    setMatchPlus([])
-    event.target.value = ""
-  }
-
-  async function handleFindTile() {
-    const page = pdfPageRef.current
-    const viewport = pdfViewportRef.current
-    const canvas = pdfCanvasRef.current
-    const tileBlob = tileImageBlobRef.current
-    if (!page || !viewport || !canvas || !tileBlob) {
-      toast.error("Upload a PDF and tile image first.")
-      return
-    }
-    setMatching(true)
-    try {
-      const match = await matchTileInPage(canvas, tileBlob)
-      setMatchRect(match.rect)
-      setMatchScore(match.score)
-      const regionText = await extractTextInRect(page, viewport, match.rect)
-      setMatchText(regionText)
-      setMatchPlus(extractPlusFromText(regionText))
-    } catch {
-      toast.error("Failed to match tile in PDF.")
-    } finally {
-      setMatching(false)
-    }
   }
 
   function saveSelectedTile() {
@@ -1028,7 +998,7 @@ export default function CatalogueBuilderPage() {
     const updated: CatalogueProject = {
       ...project,
       tiles: [],
-      tileImageIds: [],
+      imageAssetIds: [],
       updatedAt: new Date().toISOString(),
     }
     upsertProject(updated)
@@ -1116,6 +1086,8 @@ export default function CatalogueBuilderPage() {
     )
   }
 
+  const canContinueToDetection = project.pdfAssetIds.length > 0
+
   return (
     <div className="space-y-4">
       <div>
@@ -1125,66 +1097,68 @@ export default function CatalogueBuilderPage() {
         </p>
       </div>
       {projectBar}
-      <Card>
-        <CardHeader>
-          <CardTitle>PDF Tile Matcher (POC)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Catalogue PDF</Label>
-                <Input type="file" accept="application/pdf" onChange={handlePdfUpload} />
-                {pdfFileName ? (
-                  <p className="text-xs text-muted-foreground">{pdfFileName}</p>
-                ) : null}
-              </div>
-              <div className="space-y-2">
-                <Label>Tile image</Label>
-                <Input type="file" accept="image/*" onChange={handleTileImageUpload} />
-                {tileImageName ? (
-                  <p className="text-xs text-muted-foreground">{tileImageName}</p>
-                ) : null}
-              </div>
-              <Button type="button" onClick={handleFindTile} disabled={matching}>
-                {matching ? "Finding..." : "Find tile in PDF"}
-              </Button>
-              {matchScore !== null ? (
-                <div className="text-xs text-muted-foreground">
-                  Match score: <span className="font-medium">{matchScore.toFixed(2)}</span>
-                </div>
-              ) : null}
-              {matchPlus.length > 0 ? (
-                <div className="text-xs text-muted-foreground">
-                  PLUs: <span className="font-medium">{matchPlus.join(", ")}</span>
-                </div>
-              ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        {project.stage === "setup" ? (
+          <Button
+            type="button"
+            onClick={() => setProjectStage("pdf-detect")}
+            disabled={!canContinueToDetection}
+          >
+            Continue to PDF Detection
+          </Button>
+        ) : null}
+        {project.stage === "pdf-detect" ? (
+          <Button type="button" onClick={() => setProjectStage("catalogue")}>
+            Finish detection
+          </Button>
+        ) : null}
+        {project.stage === "catalogue" ? (
+          <Button type="button" variant="outline" onClick={() => setProjectStage("pdf-detect")}>
+            Back to detection
+          </Button>
+        ) : null}
+      </div>
+      {project.stage === "setup" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Project setup</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">{project.name}</span>
+              <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                {project.region}
+              </span>
             </div>
-            <div className="space-y-3">
-              <div className="relative max-h-[520px] overflow-auto rounded-md border border-border bg-muted/20 p-2">
-                <div className="relative inline-block">
-                  <canvas ref={pdfCanvasRef} className="block" />
-                  {matchRect ? (
-                    <div
-                      className="absolute border-2 border-red-500"
-                      style={{
-                        left: `${matchRect.x}px`,
-                        top: `${matchRect.y}px`,
-                        width: `${matchRect.width}px`,
-                        height: `${matchRect.height}px`,
-                      }}
-                    />
-                  ) : null}
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label>Extracted text</Label>
-                <Textarea value={matchText} readOnly className="min-h-[120px]" />
-              </div>
+            <div className="space-y-2">
+              <Label>Upload PDFs</Label>
+              <Input
+                type="file"
+                multiple
+                accept="application/pdf"
+                onChange={handleSetupPdfUpload}
+              />
+              <p className="text-xs text-muted-foreground">
+                {project.pdfAssetIds.length} PDF{project.pdfAssetIds.length === 1 ? "" : "s"} uploaded
+              </p>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+            <div className="space-y-2">
+              <Label>Upload tile images</Label>
+              <Input
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={handleSetupImageUpload}
+              />
+              <p className="text-xs text-muted-foreground">
+                {project.imageAssetIds.length} image{project.imageAssetIds.length === 1 ? "" : "s"} uploaded
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+      {project.stage === "pdf-detect" ? <PdfTileDetectionPage /> : null}
+      {project.stage === "catalogue" ? (
       <Card>
         <CardHeader>
           <CardTitle>{project.name}</CardTitle>
@@ -1435,6 +1409,7 @@ export default function CatalogueBuilderPage() {
           />
         </CardContent>
       </Card>
+      ) : null}
     </div>
   )
 }

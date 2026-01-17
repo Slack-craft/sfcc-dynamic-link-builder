@@ -4,6 +4,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { detectTilesInCanvas, type DetectedBox } from "@/tools/catalogue-builder/pdfTileDetect"
 import { loadOpenCv } from "@/lib/loadOpenCv"
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api"
@@ -19,6 +30,7 @@ export default function PdfTileDetectionPage() {
   const [pageNumber, setPageNumber] = useState(1)
   const [pageCount, setPageCount] = useState(1)
   const [pdfStatus, setPdfStatus] = useState("")
+  const [pdfName, setPdfName] = useState("")
   const [cannyLow, setCannyLow] = useState(50)
   const [cannyHigh, setCannyHigh] = useState(150)
   const [minAreaPercent, setMinAreaPercent] = useState(1)
@@ -71,7 +83,7 @@ export default function PdfTileDetectionPage() {
     pages: Record<number, PageData>
   }
 
-  const STORAGE_KEY = "pdf_tile_detection_state_v1"
+  const STORAGE_KEY = "sca_pdf_tile_detection_v1"
   const [pdfs, setPdfs] = useState<PdfEntry[]>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
@@ -194,6 +206,7 @@ export default function PdfTileDetectionPage() {
         pdfRef.current = pdfDocMapRef.current.get(first.id) ?? null
         setPageCount(first.pageCount)
         setPageNumber(1)
+        setPdfName(first.name)
         setBoxes([])
         setRectConfigs({})
         setRectPaddingPx(10)
@@ -688,11 +701,43 @@ export default function PdfTileDetectionPage() {
     console.log("Committed detected tiles", committed)
   }
 
+  function clearPdfState() {
+    setPdfs([])
+    setSelectedPdfId(null)
+    pdfRef.current = null
+    pdfDocMapRef.current.clear()
+    setPageCount(1)
+    setPageNumber(1)
+    setBoxes([])
+    setRectConfigs({})
+    setRectPaddingPx(10)
+    setCurrentOrderCounter(1)
+    setOrderingMode(false)
+    setOrderingFinished(false)
+    setHoverRectIndex(null)
+    setSelectedRectIndex(null)
+    setPageRendered(false)
+    setPdfStatus("")
+    setPdfName("")
+    localStorage.removeItem(STORAGE_KEY)
+    const canvas = pdfCanvasRef.current
+    if (canvas) {
+      const ctx = canvas.getContext("2d")
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+    const overlay = overlayCanvasRef.current
+    if (overlay) {
+      const ctx = overlay.getContext("2d")
+      if (ctx) ctx.clearRect(0, 0, overlay.width, overlay.height)
+    }
+  }
+
   function handleSelectPdf(entry: PdfEntry) {
     syncCurrentPdfState()
     setSelectedPdfId(entry.id)
     const doc = pdfDocMapRef.current.get(entry.id)
     pdfRef.current = doc ?? null
+    setPdfName(entry.name)
     setPageCount(entry.pageCount)
     setPageNumber(entry.selectedPage)
     loadPageState(entry, entry.selectedPage)

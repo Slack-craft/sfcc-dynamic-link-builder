@@ -124,6 +124,28 @@ export default function PdfTileDetectionPage() {
     [boxes]
   )
 
+  const displayRects = useMemo(() => {
+    const withIndex = areaList.map((item) => ({
+      ...item,
+      include: rectConfigs[item.index]?.include ?? true,
+      orderIndex: rectConfigs[item.index]?.orderIndex,
+    }))
+    const hasManualOrder = withIndex.some(
+      (item) => item.include && typeof item.orderIndex === "number"
+    )
+    if (!hasManualOrder) return withIndex
+    return [...withIndex].sort((a, b) => {
+      const aOrdered = typeof a.orderIndex === "number" && a.include
+      const bOrdered = typeof b.orderIndex === "number" && b.include
+      if (aOrdered && bOrdered) {
+        return (a.orderIndex as number) - (b.orderIndex as number)
+      }
+      if (aOrdered) return -1
+      if (bOrdered) return 1
+      return a.index - b.index
+    })
+  }, [areaList, rectConfigs])
+
   function pdfRectToCanvasRect(rect: PdfBox, viewport: PageViewport) {
     const [x1, y1] = viewport.convertToViewportPoint(rect.xPdf, rect.yPdf)
     const [x2, y2] = viewport.convertToViewportPoint(
@@ -1307,10 +1329,10 @@ export default function PdfTileDetectionPage() {
             <div className="space-y-2">
               <Label>Detected boxes</Label>
               <div className="max-h-[60vh] overflow-y-auto rounded-md border border-border bg-background p-2 text-xs">
-                {areaList.length === 0 ? (
+                {displayRects.length === 0 ? (
                   <div className="text-muted-foreground">No boxes detected.</div>
                 ) : (
-                  areaList.map((box) => (
+                  displayRects.map((box) => (
                     <div
                       key={`${box.index}-${box.xPdf}-${box.yPdf}`}
                       ref={(el) => {

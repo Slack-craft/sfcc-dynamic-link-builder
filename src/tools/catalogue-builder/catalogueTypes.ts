@@ -27,6 +27,7 @@ export type Tile = {
   mappedBoxIndex?: number
   originalFileName?: string
   linkBuilderState?: LinkBuilderState
+  liveLinkUrl?: string
   imageKey?: string
   image?: TileImageRef
 }

@@ -294,6 +294,10 @@ type DynamicLinkBuilderProps = {
   initialState?: LinkBuilderState
   onChange?: (state: LinkBuilderState) => void
   onOutputChange?: (output: string) => void
+  liveLinkUrl?: string
+  onLiveLinkChange?: (value: string) => void
+  liveLinkEditable?: boolean
+  liveLinkInputRef?: React.RefObject<HTMLInputElement | null>
   mode?: "full" | "embedded"
   hideHistory?: boolean
   hideAdpack?: boolean
@@ -311,6 +315,10 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       initialState,
       onChange,
       onOutputChange,
+      liveLinkUrl,
+      onLiveLinkChange,
+      liveLinkEditable = false,
+      liveLinkInputRef,
       mode = "full",
       hideHistory = false,
       hideAdpack = false,
@@ -994,15 +1002,15 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                         />
                       )
 
-                      // --- 6. Return input normally OR wrapped in tooltip ---
-                      return !shouldCheck || inAdpack ? (
-                        <div key={i}>{inputEl}</div>
-                      ) : (
+                      // --- 6. Always render a stable wrapper to avoid input remounts ---
+                      return (
                         <Tooltip key={i}>
                           <TooltipTrigger asChild>{inputEl}</TooltipTrigger>
-                          <TooltipContent>
-                            <p>PLU not in loaded AdPack</p>
-                          </TooltipContent>
+                          {shouldCheck && !inAdpack ? (
+                            <TooltipContent>
+                              <p>PLU not in loaded AdPack</p>
+                            </TooltipContent>
+                          ) : null}
                         </Tooltip>
                       )
                     })}
@@ -1022,6 +1030,16 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
             <CardTitle>Output</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            <div className="space-y-2">
+              <Label>Live Link (from Preview)</Label>
+              <Input
+                ref={liveLinkInputRef}
+                value={liveLinkUrl ?? ""}
+                onChange={(event) => onLiveLinkChange?.(event.target.value)}
+                placeholder="Captured from Preview window"
+                readOnly={!liveLinkEditable}
+              />
+            </div>
             <Label>Generated dynamic link</Label>
             <Textarea value={output} readOnly className="min-h-[180px]" />
 

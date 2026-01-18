@@ -48,6 +48,9 @@ import { extractTextFromRect, loadPdfDocument, type PdfRect } from "@/tools/cata
 import { parseOfferText } from "@/lib/extraction/parseOfferText"
 import { extractPlusFromPdfText } from "@/lib/extraction/pluUtils"
 import { buildPreviewUrl } from "@/lib/preview/buildPreviewUrl"
+import { clearObjectUrlCache, getObjectUrl } from "@/lib/images/objectUrlCache"
+import { extensionRequest } from "@/lib/preview/extensionRequest"
+import { hasExtensionPing } from "@/lib/preview/hasExtension"
  
 import type {
   CatalogueProject,
@@ -345,16 +348,19 @@ export default function CatalogueBuilderPage() {
     createEmptyExtractedFlags()
   )
   const [tileThumbUrls, setTileThumbUrls] = useState<Record<string, string>>({})
-  const tileThumbUrlsRef = useRef<Record<string, string>>({})
   const [selectedColorUrl, setSelectedColorUrl] = useState<string | null>(null)
-  const [iframeSrc, setIframeSrc] = useState("")
-  const [iframeKey, setIframeKey] = useState(0)
   const [pdfExtractRunning, setPdfExtractRunning] = useState(false)
   const [showMissingOnly, setShowMissingOnly] = useState(false)
   const [pdfAssetNames, setPdfAssetNames] = useState<Record<string, string>>({})
   const [offerDebugOpen, setOfferDebugOpen] = useState(false)
   const [offerTextDebugOpen, setOfferTextDebugOpen] = useState(false)
+  const [draftLiveLinkUrl, setDraftLiveLinkUrl] = useState("")
+  const [awaitingManualLink, setAwaitingManualLink] = useState(false)
+  const [extensionStatus, setExtensionStatus] = useState<
+    "unknown" | "available" | "unavailable"
+  >("unknown")
   const linkBuilderRef = useRef<DynamicLinkBuilderHandle | null>(null)
+  const liveLinkInputRef = useRef<HTMLInputElement | null>(null)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
@@ -446,11 +452,12 @@ export default function CatalogueBuilderPage() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={async () => {
-                if (!project) return
-                await deleteAssetsForProject(project.id)
-                deleteProject(project.id)
-                setSelectedTileId(null)
-              }}
+            if (!project) return
+            await deleteAssetsForProject(project.id)
+            clearObjectUrlCache()
+            deleteProject(project.id)
+            setSelectedTileId(null)
+          }}
             >
               Delete Project
             </AlertDialogAction>
@@ -551,6 +558,12 @@ export default function CatalogueBuilderPage() {
   }
 
   const tiles = project?.tiles ?? []
+  const tileImageSignature = useMemo(() => {
+    if (!project) return ""
+    return project.tiles
+      .map((tile) => `${tile.id}:${tile.imageKey ?? ""}`)
+      .join("|")
+  }, [project?.id, project?.tiles])
   const missingTilesCount = useMemo(() => {
     const start = performance.now()
     const count = tiles.filter((tile) => tile.pdfMappingStatus === "missing").length
@@ -653,10 +666,6 @@ export default function CatalogueBuilderPage() {
 
   useEffect(() => {
     let cancelled = false
-    const previousUrls = tileThumbUrlsRef.current
-    Object.values(previousUrls).forEach((url) => URL.revokeObjectURL(url))
-    tileThumbUrlsRef.current = {}
-    setTileThumbUrls({})
 
     if (!project) return () => undefined
     const currentProject = project
@@ -667,14 +676,12 @@ export default function CatalogueBuilderPage() {
         if (!tile.imageKey) continue
         const blob = await getImage(tile.imageKey)
         if (!blob) continue
-        const url = URL.createObjectURL(blob)
+        const url = getObjectUrl(tile.imageKey, blob)
         next[tile.id] = url
       }
       if (cancelled) {
-        Object.values(next).forEach((url) => URL.revokeObjectURL(url))
         return
       }
-      tileThumbUrlsRef.current = next
       setTileThumbUrls(next)
     }
 
@@ -682,11 +689,8 @@ export default function CatalogueBuilderPage() {
 
     return () => {
       cancelled = true
-      const currentUrls = tileThumbUrlsRef.current
-      Object.values(currentUrls).forEach((url) => URL.revokeObjectURL(url))
-      tileThumbUrlsRef.current = {}
     }
-  }, [project?.id, project?.tiles])
+  }, [project?.id, tileImageSignature])
 
   useEffect(() => {
     if (!project) {
@@ -720,31 +724,24 @@ export default function CatalogueBuilderPage() {
     setDraftLinkState(selectedTile.linkBuilderState ?? createEmptyLinkBuilderState())
     setDraftLinkOutput(selectedTile.dynamicLink ?? "")
     setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
+    setDraftLiveLinkUrl(selectedTile.liveLinkUrl ?? "")
   }, [selectedTile])
 
   useEffect(() => {
-    let cancelled = false
-    let colorUrl: string | null = null
-
-    setSelectedColorUrl(null)
-
     async function loadSelectedImages() {
       if (!selectedTile) return
       if (selectedTile.imageKey) {
         const colorBlob = await getImage(selectedTile.imageKey)
-        if (colorBlob && !cancelled) {
-          colorUrl = URL.createObjectURL(colorBlob)
-          setSelectedColorUrl(colorUrl)
+        if (colorBlob) {
+          const cachedUrl = getObjectUrl(selectedTile.imageKey, colorBlob)
+          setSelectedColorUrl(cachedUrl)
         }
+      } else {
+        setSelectedColorUrl(null)
       }
     }
 
     void loadSelectedImages()
-
-    return () => {
-      cancelled = true
-      if (colorUrl) URL.revokeObjectURL(colorUrl)
-    }
   }, [
     selectedTile?.id,
     selectedTile?.imageKey,
@@ -776,6 +773,7 @@ export default function CatalogueBuilderPage() {
     try {
       if (replaceExisting) {
         await deleteImagesForProject(project.id)
+        clearObjectUrlCache()
       }
 
       const totalSize = files.reduce((sum, file) => sum + file.size, 0)
@@ -903,14 +901,17 @@ export default function CatalogueBuilderPage() {
   function saveSelectedTile(overrides?: {
     linkBuilderState?: LinkBuilderState
     dynamicLink?: string
+    liveLinkUrl?: string
   }) {
     if (!project || !selectedTile) return
+    const liveLink = overrides?.liveLinkUrl ?? draftLiveLinkUrl
     const updated = updateTile(project, selectedTile.id, {
       title: draftTitle.trim() || undefined,
       titleEditedManually: draftTitleEditedManually,
       status: draftStatus,
       notes: draftNotes.trim() || undefined,
       dynamicLink: overrides?.dynamicLink?.trim() || draftLinkOutput.trim() || undefined,
+      liveLinkUrl: liveLink.trim() || undefined,
       linkBuilderState: overrides?.linkBuilderState ?? draftLinkState,
       extractedPluFlags: draftExtractedFlags,
     })
@@ -927,6 +928,7 @@ export default function CatalogueBuilderPage() {
     saveSelectedTile({
       linkBuilderState: result?.state,
       dynamicLink: result?.output,
+      liveLinkUrl: draftLiveLinkUrl,
     })
   }, [
     selectedTile,
@@ -937,8 +939,123 @@ export default function CatalogueBuilderPage() {
     draftLinkOutput,
     draftLinkState,
     draftExtractedFlags,
+    draftLiveLinkUrl,
     project,
   ])
+
+  useEffect(() => {
+    function onMessage(event: MessageEvent) {
+      const msg = event.data
+      if (!msg || msg.type !== "SCA_LINK_SESSION_CLOSED") return
+      if (!msg.finalUrl) return
+      setDraftLiveLinkUrl(msg.finalUrl)
+      setAwaitingManualLink(false)
+      setExtensionStatus("available")
+      toast.success("Live Link captured")
+    }
+
+    window.addEventListener("message", onMessage)
+    return () => window.removeEventListener("message", onMessage)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    async function checkExtension() {
+      const pinged = await hasExtensionPing(180)
+      if (cancelled) return
+      setExtensionStatus(pinged ? "available" : "unavailable")
+    }
+    void checkExtension()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  function isTypingTarget(target: EventTarget | null) {
+    const el = target as HTMLElement | null
+    if (!el) return false
+    const tag = el.tagName?.toLowerCase()
+    if (tag === "input" || tag === "textarea" || tag === "select") return true
+    if (el.isContentEditable) return true
+    const role = el.getAttribute?.("role")
+    return role === "combobox" || role === "listbox" || role === "textbox"
+  }
+
+  useEffect(() => {
+    if (!awaitingManualLink) return
+
+    let active = true
+    async function onPointerDown(event: PointerEvent) {
+      if (!active) return
+      if (isTypingTarget(event.target)) return
+      active = false
+      window.removeEventListener("pointerdown", onPointerDown, { capture: true } as AddEventListenerOptions)
+      try {
+        const text = await navigator.clipboard.readText()
+        const trimmed = text.trim()
+        const isAllowed =
+          trimmed.startsWith("https://staging.supercheapauto.com.au/") ||
+          trimmed.startsWith("https://staging.supercheapauto.co.nz/")
+        if (isAllowed) {
+          setDraftLiveLinkUrl(trimmed)
+          setAwaitingManualLink(false)
+          toast.success("Live Link pasted")
+          return
+        }
+      } catch {
+        // ignore clipboard errors
+      }
+      setAwaitingManualLink(false)
+      liveLinkInputRef.current?.focus()
+      toast.info("Paste the URL into Live Link.")
+    }
+
+    window.addEventListener("pointerdown", onPointerDown, { capture: true })
+    return () => {
+      active = false
+      window.removeEventListener("pointerdown", onPointerDown, { capture: true } as AddEventListenerOptions)
+    }
+  }, [awaitingManualLink])
+
+  async function handleOpenPreview() {
+    const url = previewUrl
+    if (!url) return
+    if (extensionStatus === "unavailable") {
+      window.open(url, "scaPreview", "popup,width=1200,height=800")
+      return
+    }
+    toast.info("Opening preview…")
+    try {
+      await extensionRequest("SCA_OPEN_PREVIEW_WINDOW", { url }, 600)
+      setExtensionStatus("available")
+    } catch (error) {
+      setExtensionStatus("unavailable")
+      window.open(url, "scaPreview", "popup,width=1200,height=800")
+    }
+  }
+
+  async function handleLinkViaPreview() {
+    const url = previewUrl
+    if (!url) return
+    const startManualFallback = () => {
+      window.open(url, "scaPreview", "popup,width=1200,height=800")
+      setAwaitingManualLink(true)
+      toast.info("Copy the URL in the preview (Ctrl+L, Ctrl+C), then click back into the app to paste into Live Link.")
+    }
+
+    if (extensionStatus === "unavailable") {
+      startManualFallback()
+      return
+    }
+    toast.info("Opening preview… Close the window to capture Live Link.")
+    try {
+      await extensionRequest("SCA_OPEN_LINK_VIA_PREVIEW", { url }, 600)
+      setExtensionStatus("available")
+    } catch (error) {
+      setExtensionStatus("unavailable")
+      startManualFallback()
+    }
+  }
 
   const handleSelectTile = useCallback(
     (tileId: string) => {
@@ -1660,18 +1777,71 @@ export default function CatalogueBuilderPage() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {selectedColorUrl ? (
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <div className="text-xs font-medium uppercase text-muted-foreground">
-                              Image
+                        <div className="space-y-4">
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <div className="text-xs font-medium uppercase text-muted-foreground">
+                                Image
+                              </div>
+                              <div className="w-full overflow-hidden rounded-md border border-border bg-muted/50 p-3">
+                                <img
+                                  src={selectedColorUrl}
+                                  alt={selectedTile.originalFileName}
+                                  className="max-h-[360px] w-full h-auto rounded-md object-contain"
+                                />
+                              </div>
                             </div>
-                            <div className="w-full overflow-hidden rounded-md border border-border bg-muted/50 p-3">
-                              <img
-                                src={selectedColorUrl}
-                                alt={selectedTile.originalFileName}
-                                className="max-h-[360px] w-full h-auto rounded-md object-contain"
-                              />
-                            </div>
+                            <Card>
+                              <CardHeader className="py-4">
+                                <CardTitle className="text-sm">Tile Details</CardTitle>
+                              </CardHeader>
+                              <CardContent className="space-y-3">
+                                <div className="space-y-2">
+                                  <Label htmlFor="tile-title">Title</Label>
+                                  <Input
+                                    id="tile-title"
+                                    value={draftTitle}
+                                    onChange={(event) => {
+                                      setDraftTitle(event.target.value)
+                                      setDraftTitleEditedManually(true)
+                                    }}
+                                    placeholder="Tile title"
+                                  />
+                                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                                    <span>
+                                      Brand: {selectedTile.offer?.brand?.label ?? "—"}
+                                    </span>
+                                    <span>
+                                      % Off: {selectedTile.offer?.percentOff?.raw ?? "—"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label htmlFor="tile-status">Status</Label>
+                                  <select
+                                    id="tile-status"
+                                    value={draftStatus}
+                                    onChange={(event) => setDraftStatus(event.target.value as TileStatus)}
+                                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                                  >
+                                    <option value="todo">To do</option>
+                                    <option value="in_progress">In progress</option>
+                                    <option value="done">Done</option>
+                                    <option value="needs_review">Needs review</option>
+                                  </select>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label htmlFor="tile-notes">Notes</Label>
+                                  <Textarea
+                                    id="tile-notes"
+                                    value={draftNotes}
+                                    onChange={(event) => setDraftNotes(event.target.value)}
+                                    placeholder="Notes for this tile"
+                                    className="min-h-[120px]"
+                                  />
+                                </div>
+                              </CardContent>
+                            </Card>
                           </div>
                           <div className="space-y-2">
                             <div>
@@ -1682,47 +1852,32 @@ export default function CatalogueBuilderPage() {
                                 {previewUrl}
                               </div>
                             </div>
-                            <div className="w-full overflow-hidden rounded-md border border-border bg-muted/20">
-                              {iframeSrc ? (
-                                <iframe
-                                  key={iframeKey}
-                                  src={iframeSrc}
-                                  title="Web preview"
-                                  className="h-[360px] w-full rounded-md"
-                                />
-                              ) : (
-                                <div className="flex h-[360px] items-center justify-center text-xs text-muted-foreground">
-                                  Preview not loaded.
-                                </div>
-                              )}
+                            <div className="rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+                              {extensionStatus === "available"
+                                ? "Extension enabled"
+                                : "Extension not installed — manual paste required"}
                             </div>
+                            {awaitingManualLink ? (
+                              <div className="text-xs text-muted-foreground">
+                                Click back into the app to paste into Live Link.
+                              </div>
+                            ) : null}
                             <div className="flex flex-wrap gap-2">
                               <Button
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                onClick={() => setIframeSrc(previewUrl)}
+                                onClick={handleOpenPreview}
                               >
-                                Preview
+                                Open Preview
                               </Button>
                               <Button
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                onClick={() => {
-                                  setIframeKey((prev) => prev + 1)
-                                  setIframeSrc(previewUrl)
-                                }}
+                                onClick={handleLinkViaPreview}
                               >
-                                Refresh Preview
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
-                              >
-                                Open in New Tab
+                                Link via Preview
                               </Button>
                             </div>
                           </div>
@@ -1730,43 +1885,6 @@ export default function CatalogueBuilderPage() {
                       ) : (
                         <p className="text-sm text-muted-foreground">No image for this tile.</p>
                       )}
-                      <div className="space-y-2">
-                        <Label htmlFor="tile-title">Title</Label>
-                        <Input
-                          id="tile-title"
-                          value={draftTitle}
-                          onChange={(event) => {
-                            setDraftTitle(event.target.value)
-                            setDraftTitleEditedManually(true)
-                          }}
-                          placeholder="Tile title"
-                        />
-                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                          <span>
-                            Brand: {selectedTile.offer?.brand?.label ?? "—"}
-                          </span>
-                          <span>
-                            % Off: {selectedTile.offer?.percentOff?.raw ?? "—"}
-                          </span>
-                          <span>
-                            % Off: {selectedTile.offer?.percentOff?.raw ?? "—"}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="tile-status">Status</Label>
-                        <select
-                          id="tile-status"
-                          value={draftStatus}
-                          onChange={(event) => setDraftStatus(event.target.value as TileStatus)}
-                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        >
-                          <option value="todo">To do</option>
-                          <option value="in_progress">In progress</option>
-                          <option value="done">Done</option>
-                          <option value="needs_review">Needs review</option>
-                        </select>
-                      </div>
                       <div className="space-y-2">
                         <Label>Dynamic Link Builder</Label>
                         <DynamicLinkBuilder
@@ -1777,19 +1895,14 @@ export default function CatalogueBuilderPage() {
                           initialState={draftLinkState}
                           onChange={setDraftLinkState}
                           onOutputChange={setDraftLinkOutput}
+                          liveLinkUrl={draftLiveLinkUrl}
+                          onLiveLinkChange={setDraftLiveLinkUrl}
+                          liveLinkEditable={extensionStatus !== "available"}
+                          liveLinkInputRef={liveLinkInputRef}
                           extractedPluFlags={draftExtractedFlags}
                           onExtractedPluFlagsChange={setDraftExtractedFlags}
                         />
                       </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="tile-notes">Notes</Label>
-                      <Textarea
-                        id="tile-notes"
-                        value={draftNotes}
-                        onChange={(event) => setDraftNotes(event.target.value)}
-                        placeholder="Notes for this tile"
-                      />
-                    </div>
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <Label>Offer Debug</Label>

@@ -1,4 +1,5 @@
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
+import type { OfferExtraction } from "@/types/offer"
 
 export type TileStatus = "todo" | "in_progress" | "done" | "needs_review"
 
@@ -13,7 +14,10 @@ export type Tile = {
   status: TileStatus
   dynamicLink?: string
   notes?: string
+  extractedText?: string
   extractedPluFlags?: boolean[]
+  offer?: OfferExtraction
+  titleEditedManually?: boolean
   pdfMappingStatus?: "missing"
   pdfMappingReason?: string
   mappedPdfFilename?: string

@@ -124,6 +124,17 @@ export default function PdfTileDetectionPage({
     start: { x: number; y: number }
     current: { x: number; y: number }
   } | null>(null)
+  const lastPdfIdRef = useRef<string | null>(null)
+
+  function selectRectIndex(next: number | null, reason: string) {
+    setSelectedRectIndex((prev) => {
+      if (prev !== next && import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.log("[selectRect]", { reason, prev, next, stack: new Error().stack })
+      }
+      return next
+    })
+  }
 
   type RectConfig = { include: boolean; paddingOverride?: number; orderIndex?: number }
   type PageData = {
@@ -465,6 +476,7 @@ export default function PdfTileDetectionPage({
       }
     }
     setPageRendered(true)
+    drawOverlay(boxes)
   }
 
   function getPaddedRect(box: PdfBox, padding: number) {
@@ -516,19 +528,18 @@ export default function PdfTileDetectionPage({
     const viewport = viewportRef.current
     if (!viewport) return
     ctx.clearRect(0, 0, viewport.width, viewport.height)
-    ctx.strokeStyle = "#ef4444"
-    ctx.lineWidth = 2
+    const baseStroke = "#7c3aed"
+    const baseLineWidth = 2.5
     ctx.font = "12px sans-serif"
-    ctx.fillStyle = "#ef4444"
     current.forEach((box, index) => {
       if (!(rectConfigs[index]?.include ?? true)) return
       const padding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
       const padded = getPaddedRect(box, padding)
       const isMatched = Boolean(tileMatches[box.rectId])
-      ctx.strokeStyle = isMatched ? "#16a34a" : "#f97316"
-      ctx.lineWidth = isMatched ? 3 : 2
+      ctx.strokeStyle = baseStroke
+      ctx.lineWidth = baseLineWidth
       ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
-      ctx.fillStyle = isMatched ? "#16a34a" : "#f97316"
+      ctx.fillStyle = isMatched ? "#16a34a" : baseStroke
       ctx.fillText(`${index + 1}`, padded.x + 4, padded.y + 14)
     })
 
@@ -555,7 +566,7 @@ export default function PdfTileDetectionPage({
         const padded = getPaddedRect(selected, padding)
         ctx.save()
         ctx.strokeStyle = "#22c55e"
-        ctx.lineWidth = 4
+        ctx.lineWidth = 4.5
         ctx.fillStyle = "rgba(34, 197, 94, 0.18)"
         ctx.fillRect(padded.x, padded.y, padded.width, padded.height)
         ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
@@ -595,21 +606,17 @@ export default function PdfTileDetectionPage({
 
   function assignMatch(rectId: string, imageId: string) {
     if (!currentProject) return
+    if (tileMatches[rectId] === imageId) return
+    if (Object.values(tileMatches).includes(imageId)) return
     const nextMatches: Record<string, string> = {
       ...(currentProject.tileMatches ?? {}),
     }
-    Object.entries(nextMatches).forEach(([existingRectId, existingImageId]) => {
-      if (existingImageId === imageId) {
-        delete nextMatches[existingRectId]
-      }
-    })
     nextMatches[rectId] = imageId
     updateActiveProject((project) => ({
       ...project,
       tileMatches: nextMatches,
       updatedAt: new Date().toISOString(),
     }))
-    selectNextUnmatchedRect(rectId, nextMatches)
   }
 
   function clearMatch(rectId: string) {
@@ -624,37 +631,6 @@ export default function PdfTileDetectionPage({
         updatedAt: new Date().toISOString(),
       }
     })
-  }
-
-  function selectNextUnmatchedRect(
-    startRectId?: string | null,
-    nextMatches?: Record<string, string>
-  ) {
-    const matches = nextMatches ?? tileMatches
-    const startIndex = startRectId
-      ? boxes.findIndex((box) => box.rectId === startRectId)
-      : -1
-    const nextIndex = findNextUnmatchedIndex(startIndex, matches)
-    if (nextIndex !== null) {
-      setSelectedRectIndex(nextIndex)
-    }
-  }
-
-  function findNextUnmatchedIndex(
-    startIndex: number,
-    matches: Record<string, string>
-  ) {
-    if (boxes.length === 0) return null
-    const total = boxes.length
-    for (let offset = 1; offset <= total; offset += 1) {
-      const index = (startIndex + offset + total) % total
-      const include = rectConfigs[index]?.include ?? true
-      const rectId = boxes[index]?.rectId
-      if (!include || !rectId) continue
-      if (matches[rectId]) continue
-      return index
-    }
-    return null
   }
 
   function handleOverlayClick(event: React.MouseEvent<HTMLCanvasElement>) {
@@ -674,8 +650,9 @@ export default function PdfTileDetectionPage({
     let hitArea = Number.POSITIVE_INFINITY
     boxes.forEach((box, index) => {
       if (!(rectConfigs[index]?.include ?? true)) return
-      const padding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
-      const padded = getPaddedRect(box, padding)
+      const basePadding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
+      const hitPadding = Math.max(basePadding, 6)
+      const padded = getPaddedRect(box, hitPadding)
       const inX = x >= padded.x && x <= padded.x + padded.width
       const inY = y >= padded.y && y <= padded.y + padded.height
       if (inX && inY) {
@@ -688,7 +665,7 @@ export default function PdfTileDetectionPage({
     })
 
     if (hitIndex !== null) {
-      setSelectedRectIndex(hitIndex)
+      selectRectIndex(hitIndex, "overlay-click")
     }
   }
 
@@ -702,8 +679,9 @@ export default function PdfTileDetectionPage({
     let hitArea = Number.POSITIVE_INFINITY
     boxes.forEach((box, index) => {
       if (!(rectConfigs[index]?.include ?? true)) return
-      const padding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
-      const padded = getPaddedRect(box, padding)
+      const basePadding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
+      const hitPadding = Math.max(basePadding, 6)
+      const padded = getPaddedRect(box, hitPadding)
       const inX = point.x >= padded.x && point.x <= padded.x + padded.width
       const inY = point.y >= padded.y && point.y <= padded.y + padded.height
       if (inX && inY) {
@@ -876,7 +854,7 @@ export default function PdfTileDetectionPage({
           ...prevConfigs,
           [nextIndex]: { include: true },
         }))
-        setSelectedRectIndex(nextIndex)
+        selectRectIndex(nextIndex, "draw-create")
         return [
           ...prev,
           {
@@ -940,7 +918,6 @@ export default function PdfTileDetectionPage({
         )
       )
       setHoverRectIndex(null)
-      setSelectedRectIndex(null)
       drawOverlay(converted)
     } catch (error) {
       console.error(error)
@@ -996,7 +973,6 @@ export default function PdfTileDetectionPage({
       setBoxes([])
       setRectConfigs({})
       setHoverRectIndex(null)
-      setSelectedRectIndex(null)
     } catch (error) {
       const message = error instanceof Error ? error.message : ""
       const isCancelled =
@@ -1191,7 +1167,7 @@ export default function PdfTileDetectionPage({
     setRectConfigs({})
     setRectPaddingPx(10)
     setHoverRectIndex(null)
-    setSelectedRectIndex(null)
+    selectRectIndex(null, "clear:reset-selection")
     setPageRendered(false)
     setPdfStatus("")
     updateActiveProject((project) => ({
@@ -1276,7 +1252,6 @@ export default function PdfTileDetectionPage({
     setRectConfigs(data?.rectConfigs ?? {})
     setRectPaddingPx(data?.rectPaddingPx ?? 10)
     setHoverRectIndex(null)
-    setSelectedRectIndex(null)
     setPageRendered(false)
     queueMicrotask(() => {
       isSyncingRef.current = false
@@ -1458,20 +1433,14 @@ export default function PdfTileDetectionPage({
   }, [boxes, rectConfigs, tileMatches])
 
   useEffect(() => {
+    if (!selectedPdfId) return
+    if (lastPdfIdRef.current === selectedPdfId) return
+    lastPdfIdRef.current = selectedPdfId
     if (boxes.length === 0) return
     const nextIndex = getFirstUnmatchedIndex()
     if (nextIndex === null) return
-    if (selectedRectIndex === null) {
-      setSelectedRectIndex(nextIndex)
-      return
-    }
-    const selected = boxes[selectedRectIndex]
-    const selectedIncluded = rectConfigs[selectedRectIndex]?.include ?? true
-    const selectedMatched = selected?.rectId ? tileMatches[selected.rectId] : undefined
-    if (!selectedIncluded || selectedMatched) {
-      setSelectedRectIndex(nextIndex)
-    }
-  }, [boxes, rectConfigs, tileMatches, selectedRectIndex])
+    selectRectIndex(nextIndex, "pdf-change:first-unmatched")
+  }, [selectedPdfId, boxes, rectConfigs, tileMatches])
 
   useEffect(() => {
     void runAutoDetectIfNeeded(selectedPdfEntry)
@@ -1550,6 +1519,13 @@ export default function PdfTileDetectionPage({
   }, [currentProject, pdfs])
 
   async function goToPdfByIndex(index: number) {
+    if (hasUnmatchedRect) {
+      const nextIndex = getFirstUnmatchedIndex()
+      if (nextIndex !== null) {
+        selectRectIndex(nextIndex, "nav-guard:first-unmatched")
+      }
+      return
+    }
     const entry = pdfs[index]
     if (!entry) return
     await handleSelectPdf(entry)
@@ -1991,8 +1967,25 @@ export default function PdfTileDetectionPage({
                               isMatched ? "border-emerald-500 bg-emerald-50" : "border-border hover:bg-muted"
                             }`}
                             onClick={() => {
+                              const matchedRectId = Object.entries(tileMatches).find(
+                                ([, imageId]) => imageId === image.assetId
+                              )?.[0]
+                              if (matchedRectId) {
+                                const matchedIdx = boxes.findIndex((box) => box.rectId === matchedRectId)
+                                if (matchedIdx >= 0) {
+                                  selectRectIndex(matchedIdx, "tile-click:matched-select")
+                                }
+                                return
+                              }
                               const selected = selectedRectIndex !== null ? boxes[selectedRectIndex] : null
-                              if (!selected) return
+                              const selectedInclude =
+                                selectedRectIndex !== null
+                                  ? rectConfigs[selectedRectIndex]?.include ?? true
+                                  : false
+                              if (!selected || !selectedInclude) {
+                                toast.message("Select a rect first")
+                                return
+                              }
                               assignMatch(selected.rectId, image.assetId)
                             }}
                           >
@@ -2039,7 +2032,7 @@ export default function PdfTileDetectionPage({
                           }`}
                           onMouseEnter={() => setHoverRectIndex(box.index)}
                           onMouseLeave={() => setHoverRectIndex(null)}
-                          onClick={() => setSelectedRectIndex(box.index)}
+                        onClick={() => selectRectIndex(box.index, "list-click")}
                         >
                           <div className="flex flex-wrap items-center gap-2">
                             <label className="flex items-center gap-2">

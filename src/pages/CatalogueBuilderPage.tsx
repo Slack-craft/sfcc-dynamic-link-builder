@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
 import DynamicLinkBuilder from "@/tools/link-builder/DynamicLinkBuilder"
+import { BRAND_OPTIONS } from "@/data/brands"
 import {
   createProject,
   loadProjectsState,
@@ -44,6 +45,8 @@ import { clearImagesForProject, getImage, putImage } from "@/tools/catalogue-bui
 import { deleteAssetsForProject, getAsset, putAsset } from "@/lib/assetStore"
 import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
 import { extractTextFromRect, loadPdfDocument, type PdfRect } from "@/tools/catalogue-builder/pdfTextExtract"
+import { parseOfferText } from "@/lib/extraction/parseOfferText"
+import { extractPlusFromPdfText } from "@/lib/extraction/pluUtils"
  
 import type {
   CatalogueProject,
@@ -58,7 +61,7 @@ const MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
 const PDF_DETECTION_STORAGE_KEY = "sca_pdf_tile_project_v1"
 const MAX_PLUS_FIELDS = 20
 const MAX_EXTRACTED_PLUS = 20
-const MAX_RANGE_EXPANSION = 500
+const isDev = (import.meta as any).env?.DEV
 
 type PdfDoc = Awaited<ReturnType<typeof loadPdfDocument>>
 type PdfPage = Awaited<ReturnType<PdfDoc["getPage"]>>
@@ -103,7 +106,7 @@ function parseTileMapping(fileName: string) {
   const imgPage = Number(pageMatch[1])
   const boxOrder = Number(boxMatch[1])
   if (!Number.isFinite(imgPage) || !Number.isFinite(boxOrder)) return null
-  const half = imgPage % 2 === 1 ? "left" : "right"
+  const half: "left" | "right" = imgPage % 2 === 1 ? "left" : "right"
   const spreadIndex = Math.ceil(imgPage / 2)
   return {
     imgPage,
@@ -164,68 +167,6 @@ function findRectById(entries: PdfExportEntry[], rectId: string) {
   return null
 }
 
-function isDisallowedContext(text: string, startIndex: number, endIndex: number) {
-  const before = text[startIndex - 1]
-  const after = text[endIndex]
-  const snippetStart = Math.max(0, startIndex - 2)
-  const snippetEnd = Math.min(text.length, endIndex + 2)
-  const snippet = text.slice(snippetStart, snippetEnd)
-  if (snippet.includes("%")) return true
-  if (before === "." || after === ".") return true
-  if (before === "$") return true
-  return false
-}
-
-function expandRange(startStr: string, endStr: string) {
-  const start = Number(startStr)
-  let end: number
-  if (!Number.isFinite(start)) return []
-  if (endStr.length < startStr.length) {
-    const prefix = startStr.slice(0, startStr.length - endStr.length)
-    end = Number(prefix + endStr)
-  } else {
-    end = Number(endStr)
-  }
-  if (!Number.isFinite(end) || end < start) return []
-  const values: string[] = []
-  for (let i = start; i <= end && values.length < MAX_RANGE_EXPANSION; i += 1) {
-    values.push(String(i))
-  }
-  return values
-}
-
-function extractPlusFromPdfText(text: string) {
-  const results: string[] = []
-  const seen = new Set<string>()
-
-  function addCandidate(value: string) {
-    if (value.length < 4 || value.length > 8) return
-    if (seen.has(value)) return
-    seen.add(value)
-    results.push(value)
-  }
-
-  const rangeRegex = /(\d{4,8})\s*-\s*(\d{1,8})/g
-  for (const match of text.matchAll(rangeRegex)) {
-    if (match.index === undefined) continue
-    const raw = match[0]
-    if (raw.includes(".") || isDisallowedContext(text, match.index, match.index + raw.length)) {
-      continue
-    }
-    const expanded = expandRange(match[1], match[2])
-    expanded.forEach(addCandidate)
-  }
-
-  const singleRegex = /\b\d{4,8}\b/g
-  for (const match of text.matchAll(singleRegex)) {
-    if (match.index === undefined) continue
-    if (isDisallowedContext(text, match.index, match.index + match[0].length)) continue
-    addCandidate(match[0])
-  }
-
-  return results
-}
-
 function createEmptyLinkBuilderState(): LinkBuilderState {
   return {
     category: null,
@@ -262,12 +203,14 @@ function writePdfDetectionToStorage(payload: Record<string, unknown>) {
 }
 
 export default function CatalogueBuilderPage() {
+  const SHOW_DETECTION_EXPORT = false
   const [projectsState, setProjectsState] = useState(() => loadProjectsState())
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [newProjectName, setNewProjectName] = useState("")
   const [newProjectRegion, setNewProjectRegion] = useState<Region>("AU")
   const [selectedTileId, setSelectedTileId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState("")
+  const [draftTitleEditedManually, setDraftTitleEditedManually] = useState(false)
   const [draftStatus, setDraftStatus] = useState<TileStatus>("todo")
   const [draftNotes, setDraftNotes] = useState("")
   const [draftLinkState, setDraftLinkState] = useState<LinkBuilderState>(() =>
@@ -283,6 +226,7 @@ export default function CatalogueBuilderPage() {
   const [pdfExtractRunning, setPdfExtractRunning] = useState(false)
   const [showMissingOnly, setShowMissingOnly] = useState(false)
   const [pdfAssetNames, setPdfAssetNames] = useState<Record<string, string>>({})
+  const [offerDebugOpen, setOfferDebugOpen] = useState(false)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
@@ -556,10 +500,11 @@ export default function CatalogueBuilderPage() {
     setTileThumbUrls({})
 
     if (!project) return () => undefined
+    const currentProject = project
 
     async function loadThumbs() {
       const next: Record<string, string> = {}
-      for (const tile of project.tiles) {
+      for (const tile of currentProject.tiles) {
         if (!tile.imageKey) continue
         const blob = await getImage(tile.imageKey)
         if (!blob) continue
@@ -601,6 +546,7 @@ export default function CatalogueBuilderPage() {
   useEffect(() => {
     if (!selectedTile) {
       setDraftTitle("")
+      setDraftTitleEditedManually(false)
       setDraftStatus("todo")
       setDraftNotes("")
       setDraftLinkState(createEmptyLinkBuilderState())
@@ -609,6 +555,7 @@ export default function CatalogueBuilderPage() {
       return
     }
     setDraftTitle(selectedTile.title ?? "")
+    setDraftTitleEditedManually(selectedTile.titleEditedManually ?? false)
     setDraftStatus(selectedTile.status)
     setDraftNotes(selectedTile.notes ?? "")
     setDraftLinkState(selectedTile.linkBuilderState ?? createEmptyLinkBuilderState())
@@ -726,7 +673,7 @@ export default function CatalogueBuilderPage() {
       }
 
       upsertProject(updated)
-      if (import.meta.env.DEV) {
+      if (isDev) {
         console.log("[setup] image upload", {
           files: files.length,
           newAssetIds: newImageIds.length,
@@ -798,6 +745,7 @@ export default function CatalogueBuilderPage() {
     if (!project || !selectedTile) return
     const updated = updateTile(project, selectedTile.id, {
       title: draftTitle.trim() || undefined,
+      titleEditedManually: draftTitleEditedManually,
       status: draftStatus,
       notes: draftNotes.trim() || undefined,
       dynamicLink: draftLinkOutput.trim() || undefined,
@@ -805,6 +753,24 @@ export default function CatalogueBuilderPage() {
       extractedPluFlags: draftExtractedFlags,
     })
     upsertProject(updated)
+  }
+
+  function reExtractOfferForSelected() {
+    if (!project || !selectedTile) return
+    if (!selectedTile.extractedText) {
+      toast.error("No extracted text available for this tile.")
+      return
+    }
+    const offer = parseOfferText(selectedTile.extractedText, BRAND_OPTIONS)
+    const shouldSetTitle = !selectedTile.title || !selectedTile.titleEditedManually
+    const nextTitle = shouldSetTitle ? offer.title ?? selectedTile.title : selectedTile.title
+    const updated = updateTile(project, selectedTile.id, {
+      offer,
+      title: nextTitle,
+      titleEditedManually: shouldSetTitle ? false : selectedTile.titleEditedManually,
+    })
+    upsertProject(updated)
+    toast.success("Offer extracted.")
   }
 
   function selectTileByOffset(offset: number) {
@@ -865,6 +831,18 @@ export default function CatalogueBuilderPage() {
     let missingLogCount = 0
 
     try {
+      const buildOfferUpdate = (tile: Tile, text: string) => {
+        const offer = parseOfferText(text, BRAND_OPTIONS)
+        const shouldSetTitle = !tile.title || !tile.titleEditedManually
+        const nextTitle = shouldSetTitle ? offer.title ?? tile.title : tile.title
+        return {
+          offer,
+          extractedText: text,
+          title: nextTitle,
+          titleEditedManually: shouldSetTitle ? false : tile.titleEditedManually,
+        }
+      }
+
       const docCache = new Map<string, PdfDoc>()
       const pageCache = new Map<string, Map<number, PdfPage>>()
       const exportEntries = getExportSpreadOrder(exportMap ?? [])
@@ -931,6 +909,7 @@ export default function CatalogueBuilderPage() {
           }
           const text = await extractTextFromRect(page, rect)
           const plus = extractPlusFromPdfText(text)
+          const offerUpdate = buildOfferUpdate(tile, text)
           const pageWidth = pageEntry.pageWidth ?? page.getViewport({ scale: 1 }).width
           const mappedHalf =
             box.xPdf + box.wPdf / 2 < pageWidth / 2 ? "left" : "right"
@@ -954,6 +933,7 @@ export default function CatalogueBuilderPage() {
               mappedSpreadNumber: pdfEntry.spreadNumber,
               mappedHalf,
               mappedBoxIndex: box.orderIndex,
+              ...offerUpdate,
             })
             tilesWithPlus += 1
             totalPlus += trimmed.length
@@ -966,6 +946,7 @@ export default function CatalogueBuilderPage() {
               mappedSpreadNumber: pdfEntry.spreadNumber,
               mappedHalf,
               mappedBoxIndex: box.orderIndex,
+              ...offerUpdate,
             })
           }
           continue
@@ -973,12 +954,12 @@ export default function CatalogueBuilderPage() {
         const mapping = parseTileMapping(fileName)
         if (!mapping) {
           missingMappings += 1
-          const missingTile = {
+          const missingTile: Tile = {
             ...tile,
             pdfMappingStatus: "missing",
             pdfMappingReason: "Missing page/box mapping",
           }
-          if (import.meta.env.DEV && missingLogCount < 20) {
+          if (isDev && missingLogCount < 20) {
             console.log("[pdf-extract] missing mapping", {
               fileName,
               reason: "no page/box match",
@@ -994,12 +975,12 @@ export default function CatalogueBuilderPage() {
         if (!pdfEntry) {
           missingMappings += 1
           missingNoExport += 1
-          const missingTile = {
+          const missingTile: Tile = {
             ...tile,
             pdfMappingStatus: "missing",
             pdfMappingReason: `No pdf export for spreadIndex ${mapping.spreadIndex}`,
           }
-          if (import.meta.env.DEV && missingLogCount < 20) {
+          if (isDev && missingLogCount < 20) {
             console.log("[pdf-extract] missing mapping", {
               fileName,
               imgPage: mapping.imgPage,
@@ -1020,12 +1001,12 @@ export default function CatalogueBuilderPage() {
           const asset = await getAsset(pdfAssetId)
           if (!asset) {
             missingMappings += 1
-            const missingTile = {
+            const missingTile: Tile = {
               ...tile,
               pdfMappingStatus: "missing",
               pdfMappingReason: "PDF asset missing",
             }
-            if (import.meta.env.DEV && missingLogCount < 20) {
+            if (isDev && missingLogCount < 20) {
               console.log("[pdf-extract] missing mapping", {
                 fileName,
                 imgPage: mapping.imgPage,
@@ -1060,12 +1041,12 @@ export default function CatalogueBuilderPage() {
         if (!pageEntry) {
           missingMappings += 1
           missingNoRect += 1
-          const missingTile = {
+          const missingTile: Tile = {
             ...tile,
             pdfMappingStatus: "missing",
             pdfMappingReason: "No rects for export page",
           }
-          if (import.meta.env.DEV && missingLogCount < 20) {
+          if (isDev && missingLogCount < 20) {
             console.log("[pdf-extract] missing mapping", {
               fileName,
               imgPage: mapping.imgPage,
@@ -1097,12 +1078,12 @@ export default function CatalogueBuilderPage() {
         if (!box) {
           missingMappings += 1
           missingNoRect += 1
-          const missingTile = {
+          const missingTile: Tile = {
             ...tile,
             pdfMappingStatus: "missing",
             pdfMappingReason: `No rect for box (L:${leftBucket.length} R:${rightBucket.length})`,
           }
-          if (import.meta.env.DEV && missingLogCount < 20) {
+          if (isDev && missingLogCount < 20) {
             const orderIndices = bucket.map((item) => item.orderIndex ?? 0)
             const minOrder =
               orderIndices.length > 0 ? Math.min(...orderIndices) : null
@@ -1135,6 +1116,7 @@ export default function CatalogueBuilderPage() {
         }
         const text = await extractTextFromRect(page, rect)
         const plus = extractPlusFromPdfText(text)
+        const offerUpdate = buildOfferUpdate(tile, text)
         if (plus.length > 0) {
           const trimmed = plus.slice(0, MAX_EXTRACTED_PLUS)
           const baseState = tile.linkBuilderState ?? createEmptyLinkBuilderState()
@@ -1155,6 +1137,7 @@ export default function CatalogueBuilderPage() {
             mappedSpreadNumber: mapping.spreadIndex,
             mappedHalf: mapping.half,
             mappedBoxIndex: mapping.boxOrder,
+            ...offerUpdate,
           })
           tilesWithPlus += 1
           totalPlus += trimmed.length
@@ -1167,6 +1150,7 @@ export default function CatalogueBuilderPage() {
             mappedSpreadNumber: mapping.spreadIndex,
             mappedHalf: mapping.half,
             mappedBoxIndex: mapping.boxOrder,
+            ...offerUpdate,
           })
         }
       }
@@ -1386,50 +1370,52 @@ export default function CatalogueBuilderPage() {
               </div>
             ) : null}
           </div>
-          <Card className="mt-4">
-            <CardHeader>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle>Detection Export Summary</CardTitle>
-                <Button type="button" size="sm" variant="outline" onClick={downloadDetectionExport}>
-                  Download export JSON
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <div className="text-muted-foreground">
-                Project: <span className="text-foreground">{project.name}</span> ({project.id})
-              </div>
-              <div className="text-muted-foreground">
-                PDFs: <span className="text-foreground">{project.pdfAssetIds.length}</span>
-              </div>
-              {detectionSummary.length === 0 ? (
-                <div className="text-xs text-muted-foreground">No export data available.</div>
-              ) : (
-                <div className="space-y-2">
-                  {detectionSummary.map((row, index) => {
-                    const hasWarning = !row.exportPresent || row.orderedCount === 0
-                    return (
-                      <div key={row.assetId} className="rounded-md border border-border p-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="font-medium">
-                            {index + 1}. {row.name}
-                          </div>
-                          {hasWarning ? (
-                            <Badge variant="destructive">Check export</Badge>
-                          ) : null}
-                        </div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          Export: {row.exportPresent ? "yes" : "no"} | Total: {row.totalCount} | Included:{" "}
-                          {row.includedCount} | Ordered: {row.orderedCount} | Page size:{" "}
-                          {row.hasSize ? "yes" : "no"} | Spread: {row.spreadNumber ?? "?"}
-                        </div>
-                      </div>
-                    )
-                  })}
+          {SHOW_DETECTION_EXPORT ? (
+            <Card className="mt-4">
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle>Detection Export Summary</CardTitle>
+                  <Button type="button" size="sm" variant="outline" onClick={downloadDetectionExport}>
+                    Download export JSON
+                  </Button>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="text-muted-foreground">
+                  Project: <span className="text-foreground">{project.name}</span> ({project.id})
+                </div>
+                <div className="text-muted-foreground">
+                  PDFs: <span className="text-foreground">{project.pdfAssetIds.length}</span>
+                </div>
+                {detectionSummary.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">No export data available.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {detectionSummary.map((row, index) => {
+                      const hasWarning = !row.exportPresent || row.orderedCount === 0
+                      return (
+                        <div key={row.assetId} className="rounded-md border border-border p-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="font-medium">
+                              {index + 1}. {row.name}
+                            </div>
+                            {hasWarning ? (
+                              <Badge variant="destructive">Check export</Badge>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Export: {row.exportPresent ? "yes" : "no"} | Total: {row.totalCount} | Included:{" "}
+                            {row.includedCount} | Ordered: {row.orderedCount} | Page size:{" "}
+                            {row.hasSize ? "yes" : "no"} | Spread: {row.spreadNumber ?? "?"}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ) : null}
           <Separator className="my-4" />
           {project.tiles.length === 0 ? (
             <div
@@ -1572,7 +1558,10 @@ export default function CatalogueBuilderPage() {
                         <Input
                           id="tile-title"
                           value={draftTitle}
-                          onChange={(event) => setDraftTitle(event.target.value)}
+                          onChange={(event) => {
+                            setDraftTitle(event.target.value)
+                            setDraftTitleEditedManually(true)
+                          }}
                           placeholder="Tile title"
                         />
                       </div>
@@ -1611,6 +1600,63 @@ export default function CatalogueBuilderPage() {
                         onChange={(event) => setDraftNotes(event.target.value)}
                         placeholder="Notes for this tile"
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Label>Offer Debug</Label>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setOfferDebugOpen((prev) => !prev)}
+                          >
+                            {offerDebugOpen ? "Hide" : "Show"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={reExtractOfferForSelected}
+                            disabled={!selectedTile.extractedText}
+                          >
+                            Re-extract Offer
+                          </Button>
+                        </div>
+                      </div>
+                      {offerDebugOpen ? (
+                        <div className="rounded-md border border-border bg-muted/30 p-3 text-xs">
+                          <div className="space-y-1">
+                            <div>
+                              <span className="font-medium">Title:</span>{" "}
+                              {selectedTile.offer?.title ?? "—"}
+                            </div>
+                            <div>
+                              <span className="font-medium">Percent:</span>{" "}
+                              {selectedTile.offer?.percentOff?.raw ?? "—"}
+                            </div>
+                            <div>
+                              <span className="font-medium">Brand:</span>{" "}
+                              {selectedTile.offer?.brand?.label ?? "—"}
+                            </div>
+                            <div>
+                              <span className="font-medium">Price:</span>{" "}
+                              {selectedTile.offer?.price?.raw ?? "—"}
+                              {selectedTile.offer?.price?.qualifier
+                                ? ` (${selectedTile.offer?.price?.qualifier})`
+                                : ""}
+                            </div>
+                            <div>
+                              <span className="font-medium">Save:</span>{" "}
+                              {selectedTile.offer?.save?.raw ?? "—"}
+                            </div>
+                            <div>
+                              <span className="font-medium">Details:</span>{" "}
+                              {selectedTile.offer?.productDetails ?? "—"}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Button type="button" onClick={saveSelectedTile}>

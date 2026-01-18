@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -33,7 +33,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
-import DynamicLinkBuilder from "@/tools/link-builder/DynamicLinkBuilder"
+import DynamicLinkBuilder, { type DynamicLinkBuilderHandle } from "@/tools/link-builder/DynamicLinkBuilder"
 import { BRAND_OPTIONS } from "@/data/brands"
 import {
   createProject,
@@ -63,6 +63,124 @@ const PDF_DETECTION_STORAGE_KEY = "sca_pdf_tile_project_v1"
 const MAX_PLUS_FIELDS = 20
 const MAX_EXTRACTED_PLUS = 20
 const isDev = (import.meta as any).env?.DEV
+
+type TileCardProps = {
+  tile: Tile
+  isSelected: boolean
+  thumbUrl?: string
+  onSelect: (tileId: string) => void
+}
+
+const TileCard = memo(function TileCard({
+  tile,
+  isSelected,
+  thumbUrl,
+  onSelect,
+}: TileCardProps) {
+  const renders = useRef(0)
+  renders.current += 1
+  if (isDev && renders.current % 20 === 0) {
+    console.log("[TileCard] renders", renders.current, tile.id)
+  }
+  const mappingInfo = formatMappingInfo(tile.originalFileName ?? tile.id)
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(tile.id)}
+      className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
+        isSelected
+          ? "border-primary bg-muted"
+          : "border-border hover:bg-muted/50"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {thumbUrl ? (
+            <img
+              src={thumbUrl}
+              alt=""
+              className="h-10 w-10 rounded-md border border-border object-cover"
+            />
+          ) : (
+            <div className="h-10 w-10 rounded-md border border-dashed border-border" />
+          )}
+          <span className="font-medium">{tile.id}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {tile.pdfMappingStatus === "missing" ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="destructive" className="text-[10px] uppercase">
+                    Missing
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {tile.pdfMappingReason ?? "Missing PDF mapping"} ({mappingInfo})
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+          {tile.mappedSpreadNumber ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border text-muted-foreground">
+                    <Info className="h-3 w-3" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {`Spread ${tile.mappedSpreadNumber} → ${tile.mappedPdfFilename ?? "PDF"} → ${tile.mappedHalf ?? "?"} → box ${tile.mappedBoxIndex ?? "?"}`}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+          <span className="text-xs uppercase text-muted-foreground">
+            {tile.status}
+          </span>
+        </div>
+      </div>
+      {tile.title ? (
+        <div className="mt-1 text-xs text-muted-foreground">
+          {tile.title.length > 80 ? `${tile.title.slice(0, 80)}…` : tile.title}
+        </div>
+      ) : null}
+    </button>
+  )
+})
+
+type TileListProps = {
+  tiles: Tile[]
+  selectedTileId: string | null
+  tileThumbUrls: Record<string, string>
+  onSelect: (tileId: string) => void
+}
+
+const TileList = memo(function TileList({
+  tiles,
+  selectedTileId,
+  tileThumbUrls,
+  onSelect,
+}: TileListProps) {
+  const renders = useRef(0)
+  renders.current += 1
+  if (isDev && renders.current % 20 === 0) {
+    console.log("[TileList] renders", renders.current)
+  }
+  return (
+    <div className="space-y-2">
+      {tiles.map((tile) => (
+        <TileCard
+          key={tile.id}
+          tile={tile}
+          isSelected={tile.id === selectedTileId}
+          thumbUrl={tileThumbUrls[tile.id]}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
+  )
+})
 
 type PdfDoc = Awaited<ReturnType<typeof loadPdfDocument>>
 type PdfPage = Awaited<ReturnType<PdfDoc["getPage"]>>
@@ -205,6 +323,11 @@ function writePdfDetectionToStorage(payload: Record<string, unknown>) {
 
 export default function CatalogueBuilderPage() {
   const SHOW_DETECTION_EXPORT = false
+  const renderCountRef = useRef(0)
+  renderCountRef.current += 1
+  if (isDev && renderCountRef.current % 10 === 0) {
+    console.log("[CB] renders", renderCountRef.current)
+  }
   const [projectsState, setProjectsState] = useState(() => loadProjectsState())
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [newProjectName, setNewProjectName] = useState("")
@@ -231,6 +354,7 @@ export default function CatalogueBuilderPage() {
   const [pdfAssetNames, setPdfAssetNames] = useState<Record<string, string>>({})
   const [offerDebugOpen, setOfferDebugOpen] = useState(false)
   const [offerTextDebugOpen, setOfferTextDebugOpen] = useState(false)
+  const linkBuilderRef = useRef<DynamicLinkBuilderHandle | null>(null)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
@@ -243,6 +367,16 @@ export default function CatalogueBuilderPage() {
       ) ?? null
     )
   }, [projectsState])
+
+  function persistProjectsState(
+    updater: (prev: typeof projectsState) => typeof projectsState
+  ) {
+    setProjectsState((prev) => {
+      const nextState = updater(prev)
+      saveProjectsState(nextState)
+      return nextState
+    })
+  }
 
   useEffect(() => {
     if (!project || project.stage !== "pdf-detect") return
@@ -373,14 +507,14 @@ export default function CatalogueBuilderPage() {
   }, [projectsState])
 
   function setActiveProjectId(nextId: string | null) {
-    setProjectsState((prev) => ({
+    persistProjectsState((prev) => ({
       ...prev,
       activeProjectId: nextId,
     }))
   }
 
   function upsertProject(updated: CatalogueProject) {
-    setProjectsState((prev) => ({
+    persistProjectsState((prev) => ({
       ...prev,
       projects: prev.projects.map((item) =>
         item.id === updated.id ? updated : item
@@ -389,14 +523,14 @@ export default function CatalogueBuilderPage() {
   }
 
   function addProject(newProject: CatalogueProject) {
-    setProjectsState((prev) => ({
+    persistProjectsState((prev) => ({
       activeProjectId: newProject.id,
       projects: [...prev.projects, newProject],
     }))
   }
 
   function deleteProject(projectId: string) {
-    setProjectsState((prev) => {
+    persistProjectsState((prev) => {
       const projects = prev.projects.filter((item) => item.id !== projectId)
       const activeProjectId =
         prev.activeProjectId === projectId ? projects[0]?.id ?? null : prev.activeProjectId
@@ -417,20 +551,35 @@ export default function CatalogueBuilderPage() {
   }
 
   const tiles = project?.tiles ?? []
-  const missingTilesCount = tiles.filter(
-    (tile) => tile.pdfMappingStatus === "missing"
-  ).length
-  const displayTiles = showMissingOnly
-    ? tiles.filter((tile) => tile.pdfMappingStatus === "missing")
-    : tiles
+  const missingTilesCount = useMemo(() => {
+    const start = performance.now()
+    const count = tiles.filter((tile) => tile.pdfMappingStatus === "missing").length
+    const duration = performance.now() - start
+    if (isDev && duration > 10) {
+      console.log("[CB] missingTilesCount", duration.toFixed(1), "ms")
+    }
+    return count
+  }, [tiles])
+  const displayTiles = useMemo(() => {
+    const start = performance.now()
+    const next = showMissingOnly
+      ? tiles.filter((tile) => tile.pdfMappingStatus === "missing")
+      : tiles
+    const duration = performance.now() - start
+    if (isDev && duration > 10) {
+      console.log("[CB] displayTiles", duration.toFixed(1), "ms")
+    }
+    return next
+  }, [tiles, showMissingOnly])
   const detectionSummary = useMemo(() => {
+    const start = performance.now()
     if (!project) return []
     const detectionState = project.pdfDetection as {
       byPdfAssetId?: Record<string, PdfExportEntry>
       export?: PdfExportEntry[]
     }
     const exportEntries = getExportSpreadOrder(detectionState.export ?? [])
-    return exportEntries.map((entry, index) => {
+    const summary = exportEntries.map((entry, index) => {
       const assetId = entry.pdfId
       const pages = entry?.pages ?? {}
       const boxes = Array.isArray(pages)
@@ -456,6 +605,11 @@ export default function CatalogueBuilderPage() {
         spreadNumber: entry?.spreadNumber,
       }
     })
+    const duration = performance.now() - start
+    if (isDev && duration > 10) {
+      console.log("[CB] detectionSummary", duration.toFixed(1), "ms")
+    }
+    return summary
   }, [project, pdfAssetNames])
   const selectedTile = useMemo(
     () => tiles.find((tile) => tile.id === selectedTileId) ?? null,
@@ -746,19 +900,56 @@ export default function CatalogueBuilderPage() {
     event.preventDefault()
   }
 
-  function saveSelectedTile() {
+  function saveSelectedTile(overrides?: {
+    linkBuilderState?: LinkBuilderState
+    dynamicLink?: string
+  }) {
     if (!project || !selectedTile) return
     const updated = updateTile(project, selectedTile.id, {
       title: draftTitle.trim() || undefined,
       titleEditedManually: draftTitleEditedManually,
       status: draftStatus,
       notes: draftNotes.trim() || undefined,
-      dynamicLink: draftLinkOutput.trim() || undefined,
-      linkBuilderState: draftLinkState,
+      dynamicLink: overrides?.dynamicLink?.trim() || draftLinkOutput.trim() || undefined,
+      linkBuilderState: overrides?.linkBuilderState ?? draftLinkState,
       extractedPluFlags: draftExtractedFlags,
     })
     upsertProject(updated)
   }
+
+  const commitAndSaveSelectedTile = useCallback(() => {
+    if (!selectedTile) return
+    const result = linkBuilderRef.current?.commitNow()
+    if (result) {
+      setDraftLinkState(result.state)
+      setDraftLinkOutput(result.output)
+    }
+    saveSelectedTile({
+      linkBuilderState: result?.state,
+      dynamicLink: result?.output,
+    })
+  }, [
+    selectedTile,
+    draftTitle,
+    draftTitleEditedManually,
+    draftStatus,
+    draftNotes,
+    draftLinkOutput,
+    draftLinkState,
+    draftExtractedFlags,
+    project,
+  ])
+
+  const handleSelectTile = useCallback(
+    (tileId: string) => {
+      if (tileId === selectedTileId) return
+      if (selectedTile) {
+        commitAndSaveSelectedTile()
+      }
+      setSelectedTileId(tileId)
+    },
+    [selectedTile, selectedTileId, commitAndSaveSelectedTile]
+  )
 
   function reExtractOfferForSelected() {
     if (!project || !selectedTile) return
@@ -781,6 +972,7 @@ export default function CatalogueBuilderPage() {
 
   function selectTileByOffset(offset: number) {
     if (!selectedTile) return
+    commitAndSaveSelectedTile()
     const currentIndex = tiles.findIndex((tile) => tile.id === selectedTile.id)
     if (currentIndex === -1) return
     const nextIndex = currentIndex + offset
@@ -1184,34 +1376,22 @@ export default function CatalogueBuilderPage() {
       const isCmdOrCtrl = event.metaKey || event.ctrlKey
       if (isCmdOrCtrl && event.key.toLowerCase() === "s") {
         event.preventDefault()
-        saveSelectedTile()
-        return
-      }
-      const isEnter = event.key === "Enter"
-      const isNextShortcut = isCmdOrCtrl && event.key.toLowerCase() === "enter"
-      if (isEnter || isNextShortcut) {
-        const target = event.target as HTMLElement | null
-        const tag = target?.tagName?.toLowerCase()
-        if (tag === "textarea") return
-        event.preventDefault()
-        saveSelectedTile()
-        selectTileByOffset(1)
+        commitAndSaveSelectedTile()
       }
     }
 
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [
-    project,
-    selectedTile,
-    draftTitle,
-    draftStatus,
-    draftNotes,
-    draftLinkOutput,
-    draftLinkState,
-    draftExtractedFlags,
-    tiles,
-  ])
+  }, [commitAndSaveSelectedTile])
+
+  useEffect(() => {
+    const handler = () => {
+      if (!selectedTile) return
+      commitAndSaveSelectedTile()
+    }
+    window.addEventListener("beforeunload", handler)
+    return () => window.removeEventListener("beforeunload", handler)
+  }, [commitAndSaveSelectedTile, selectedTile?.id])
 
   if (!project) {
     return (
@@ -1465,79 +1645,12 @@ export default function CatalogueBuilderPage() {
                     {showMissingOnly ? "Show all" : "Show missing only"}
                   </Button>
                 </div>
-                <div className="space-y-2">
-                  {displayTiles.map((tile) => {
-                    const isSelected = tile.id === selectedTileId
-                    const mappingInfo = formatMappingInfo(tile.originalFileName ?? tile.id)
-                    return (
-                      <button
-                        key={tile.id}
-                        type="button"
-                        onClick={() => setSelectedTileId(tile.id)}
-                        className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
-                          isSelected
-                            ? "border-primary bg-muted"
-                            : "border-border hover:bg-muted/50"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            {tileThumbUrls[tile.id] ? (
-                              <img
-                                src={tileThumbUrls[tile.id]}
-                                alt=""
-                                className="h-10 w-10 rounded-md border border-border object-cover"
-                              />
-                            ) : (
-                              <div className="h-10 w-10 rounded-md border border-dashed border-border" />
-                            )}
-                            <span className="font-medium">{tile.id}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {tile.pdfMappingStatus === "missing" ? (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge variant="destructive" className="text-[10px] uppercase">
-                                      Missing
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    {tile.pdfMappingReason ?? "Missing PDF mapping"} ({mappingInfo})
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            ) : null}
-                            {tile.mappedSpreadNumber ? (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border text-muted-foreground">
-                                      <Info className="h-3 w-3" />
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    {`Spread ${tile.mappedSpreadNumber} • ${tile.mappedPdfFilename ?? "PDF"} • ${tile.mappedHalf ?? "?"} • box ${tile.mappedBoxIndex ?? "?"}`}
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            ) : null}
-                            <span className="text-xs uppercase text-muted-foreground">
-                              {tile.status}
-                            </span>
-                          </div>
-                        </div>
-                        {tile.title ? (
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {tile.title.length > 80
-                              ? `${tile.title.slice(0, 80)}…`
-                              : tile.title}
-                          </div>
-                        ) : null}
-                      </button>
-                    )
-                  })}
-                </div>
+                <TileList
+                  tiles={displayTiles}
+                  selectedTileId={selectedTileId}
+                  tileThumbUrls={tileThumbUrls}
+                  onSelect={handleSelectTile}
+                />
               </div>
               <div>
                 {selectedTile ? (
@@ -1657,6 +1770,7 @@ export default function CatalogueBuilderPage() {
                       <div className="space-y-2">
                         <Label>Dynamic Link Builder</Label>
                         <DynamicLinkBuilder
+                          ref={linkBuilderRef}
                           mode="embedded"
                           hideHistory
                           hideAdpack
@@ -1765,14 +1879,14 @@ export default function CatalogueBuilderPage() {
                       ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button type="button" onClick={saveSelectedTile}>
+                      <Button type="button" onClick={commitAndSaveSelectedTile}>
                         Save (Ctrl+S)
                       </Button>
                       <Button
                         type="button"
                         variant="secondary"
                         onClick={() => {
-                          saveSelectedTile()
+                          commitAndSaveSelectedTile()
                           selectTileByOffset(1)
                         }}
                       >
@@ -1809,4 +1923,5 @@ export default function CatalogueBuilderPage() {
     </div>
   )
 }
+
 

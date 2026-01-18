@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -301,21 +301,33 @@ type DynamicLinkBuilderProps = {
   onExtractedPluFlagsChange?: (flags: boolean[]) => void
 }
 
-export default function DynamicLinkBuilder({
-  initialState,
-  onChange,
-  onOutputChange,
-  mode = "full",
-  hideHistory = false,
-  hideAdpack = false,
-  extractedPluFlags,
-  onExtractedPluFlagsChange,
-}: DynamicLinkBuilderProps) {
+export type DynamicLinkBuilderHandle = {
+  commitNow: () => { state: LinkBuilderState; output: string }
+}
+
+const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuilderProps>(
+  (
+    {
+      initialState,
+      onChange,
+      onOutputChange,
+      mode = "full",
+      hideHistory = false,
+      hideAdpack = false,
+      extractedPluFlags,
+      onExtractedPluFlagsChange,
+    },
+    ref
+  ) => {
+  const renderCountRef = useRef(0)
+  renderCountRef.current += 1
+  if ((import.meta as any).env?.DEV && renderCountRef.current % 20 === 0) {
+    console.log("[DynamicLinkBuilder] renders", renderCountRef.current)
+  }
   const normalizedInitial = useMemo(() => normalizeState(initialState), [initialState])
   // Base selection (mutually exclusive)
   const [category, setCategory] = useState<LinkBuilderOption | null>(normalizedInitial.category)
   const [brand, setBrand] = useState<LinkBuilderOption | null>(normalizedInitial.brand)
-  const syncingFromInitialRef = useRef(false)
   const extensionRef = useRef<HTMLTextAreaElement | null>(null)
   const categoryTriggerRef = useRef<HTMLButtonElement | null>(null)
 
@@ -365,6 +377,8 @@ export default function DynamicLinkBuilder({
   // Refinement (mutually exclusive)
   const [extension, setExtension] = useState(normalizedInitial.extension)
   const [plus, setPlus] = useState<string[]>(normalizedInitial.plus)
+  const [pluDrafts, setPluDrafts] = useState<string[]>(normalizedInitial.plus)
+  const activePluIndexRef = useRef<number | null>(null)
 
   // History
   const [savedLinks, setSavedLinks] = useState<SavedLink[]>(() =>
@@ -395,12 +409,17 @@ export default function DynamicLinkBuilder({
     const normalized = normalizeState(initialState)
     const current = { category, brand, extension, plus }
     if (statesEqual(normalized, current)) return
-    syncingFromInitialRef.current = true
     setCategory(normalized.category)
     setBrand(normalized.brand)
     setExtension(normalized.extension)
     setPlus(normalized.plus)
+    setPluDrafts(normalized.plus)
   }, [initialState])
+
+  useEffect(() => {
+    if (activePluIndexRef.current !== null) return
+    setPluDrafts(plus)
+  }, [plus])
 
   // Derived values
   const anyPLU = useMemo(() => plus.some((p) => isNonEmpty(p)), [plus])
@@ -417,6 +436,43 @@ export default function DynamicLinkBuilder({
 
   const extensionDisabled = anyPLU
   const pluDisabled = extensionValid && hasExtensionText // only lock PLUs when extension is usable
+
+  function buildOutputFromState(state: LinkBuilderState) {
+    const hasExtensionTextLocal = isNonEmpty(state.extension)
+    const extensionQueryLocal = extractQueryString(state.extension)
+    const extensionValidLocal =
+      !hasExtensionTextLocal || isNonEmpty(extensionQueryLocal)
+    const cleanedPLUsLocal = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
+    const pluCountLocal = cleanedPLUsLocal.length
+
+    if (hasExtensionTextLocal && !extensionValidLocal) {
+      return "Extension is not valid (missing '?'). Paste a URL that includes a query string, or paste query params only."
+    }
+
+    if (!hasExtensionTextLocal && pluCountLocal === 1) {
+      return `$Url('Product-Show','pid','${cleanedPLUsLocal[0]}')$`
+    }
+
+    const baseValue = state.category?.value ?? state.brand?.value ?? ""
+    if (!baseValue) {
+      if (pluCountLocal > 1 || hasExtensionTextLocal) return "Select a Category or Brand to generate the base link."
+      return "Select a Category or Brand, or enter one PLU to generate a Product link."
+    }
+
+    let built = `$Url('Search-Show','cgid','${baseValue}')$`
+
+    if (isNonEmpty(extensionQueryLocal)) {
+      built += extensionQueryLocal
+      return built
+    }
+
+    if (pluCountLocal > 1) {
+      built += buildIdFilter(cleanedPLUsLocal)
+      return built
+    }
+
+    return built
+  }
 
   // Output building
   const output = useMemo(() => {
@@ -455,17 +511,10 @@ export default function DynamicLinkBuilder({
     return built
   }, [brand, category, cleanedPLUs, extensionQuery, hasExtensionText, extensionValid, pluCount])
 
-  useEffect(() => {
-    if (syncingFromInitialRef.current) {
-      syncingFromInitialRef.current = false
-      return
-    }
-    onChange?.({ category, brand, extension, plus })
-  }, [category, brand, extension, plus, onChange])
-
-  useEffect(() => {
-    onOutputChange?.(output)
-  }, [output, onOutputChange])
+  function commitState(nextState: LinkBuilderState) {
+    onChange?.(nextState)
+    onOutputChange?.(buildOutputFromState(nextState))
+  }
 
   function updateExtractedFlags(
     updater: (flags: boolean[]) => boolean[]
@@ -500,12 +549,16 @@ export default function DynamicLinkBuilder({
   }
 
   function clearPLUs() {
-    setPlus(Array.from({ length: 20 }, () => ""))
+    const nextPlus = Array.from({ length: 20 }, () => "")
+    setPlus(nextPlus)
+    setPluDrafts(nextPlus)
     updateExtractedFlags((flags) => flags.map(() => false))
+    commitState({ category, brand, extension, plus: nextPlus })
   }
 
   function clearExtension() {
     setExtension("")
+    commitState({ category, brand, extension: "", plus })
   }
 
   function resetBuilder() {
@@ -534,21 +587,26 @@ export default function DynamicLinkBuilder({
       .filter((t) => t.length > 0)
 
     if (tokens.length === 0) return
+    const nextPlus = [...plus]
+    for (let i = 0; i < tokens.length; i++) {
+      const idx = startIndex + i
+      if (idx >= nextPlus.length) break
+      nextPlus[idx] = tokens[i]
+    }
 
-    setPlus((prev) => {
-      const next = [...prev]
-      for (let i = 0; i < tokens.length; i++) {
-        const idx = startIndex + i
-        if (idx >= next.length) break
-        next[idx] = tokens[i]
-      }
-      return next
-    })
+    setPlus(nextPlus)
+    setPluDrafts(nextPlus)
     clearExtractedAt(
       tokens.map((_, i) => startIndex + i).filter((idx) => idx < plus.length)
     )
 
     toast.success(`Pasted ${Math.min(tokens.length, 20 - startIndex)} PLU(s)`)
+    commitState({
+      category,
+      brand,
+      extension,
+      plus: nextPlus,
+    })
   }
 
   function restoreSavedLink(item: SavedLink) {
@@ -565,6 +623,13 @@ export default function DynamicLinkBuilder({
     setBrand(restoredBrand)
     setExtension(item.extension ?? "")
     setPlus(Array.from({ length: 20 }, (_, i) => item.plus?.[i] ?? ""))
+    setPluDrafts(Array.from({ length: 20 }, (_, i) => item.plus?.[i] ?? ""))
+    commitState({
+      category: restoredCategory,
+      brand: restoredBrand,
+      extension: item.extension ?? "",
+      plus: Array.from({ length: 20 }, (_, i) => item.plus?.[i] ?? ""),
+    })
 
     toast.success("Restored saved link parameters")
   }
@@ -645,6 +710,22 @@ export default function DynamicLinkBuilder({
   const gridClass = isEmbedded
     ? "grid w-full gap-6 lg:grid-cols-2 lg:items-stretch"
     : "grid w-full gap-6 lg:grid-cols-3 lg:items-stretch"
+
+  function commitNow() {
+    const committedPlus = pluDrafts.map((value) => value.trim())
+    const nextState: LinkBuilderState = {
+      category,
+      brand,
+      extension,
+      plus: committedPlus,
+    }
+    setPlus(committedPlus)
+    setPluDrafts(committedPlus)
+    commitState(nextState)
+    return { state: nextState, output: buildOutputFromState(nextState) }
+  }
+
+  useImperativeHandle(ref, () => ({ commitNow }), [commitNow])
 
   // Ctrl+S / Cmd+S shortcut
   useEffect(() => {
@@ -737,6 +818,12 @@ export default function DynamicLinkBuilder({
                   onClick={() => {
                     setCategory(null)
                     setBrand(null)
+                    commitState({
+                      category: null,
+                      brand: null,
+                      extension,
+                      plus,
+                    })
                   }}
                 >
                   Clear base
@@ -748,8 +835,15 @@ export default function DynamicLinkBuilder({
                 options={CATEGORY_OPTIONS}
                 value={category}
                 onChange={(opt) => {
+                  const nextBrand = opt ? null : brand
                   setCategory(opt)
                   if (opt) setBrand(null)
+                  commitState({
+                    category: opt,
+                    brand: nextBrand,
+                    extension,
+                    plus,
+                  })
                 }}
                 disabled={categoryDisabled}
                 placeholder="Type to search categories"
@@ -763,8 +857,15 @@ export default function DynamicLinkBuilder({
                 options={BRAND_OPTIONS}
                 value={brand}
                 onChange={(opt) => {
+                  const nextCategory = opt ? null : category
                   setBrand(opt)
                   if (opt) setCategory(null)
+                  commitState({
+                    category: nextCategory,
+                    brand: opt,
+                    extension,
+                    plus,
+                  })
                 }}
                 disabled={brandDisabled}
                 placeholder="Type to search brands"
@@ -795,6 +896,14 @@ export default function DynamicLinkBuilder({
                   ref={extensionRef}
                   value={extension}
                   onChange={(e) => setExtension(e.target.value)}
+                  onBlur={() =>
+                    commitState({
+                      category,
+                      brand,
+                      extension,
+                      plus,
+                    })
+                  }
                   placeholder="https://www.supercheapauto.com.au/spare-parts?prefn1=...&sz=36"
                   disabled={extensionDisabled}
                 />
@@ -814,9 +923,9 @@ export default function DynamicLinkBuilder({
                 <Label>PLUs (1-20)</Label>
                 <TooltipProvider delayDuration={250}>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {plus.map((plu, i) => {
+                    {pluDrafts.map((plu, i) => {
                       // --- 1. Normalise the current PLU ---
-                      const trimmed = plu.trim()
+                      const trimmed = (plu ?? "").trim()
 
                       // --- 2. Decide whether we should check against AdPack ---
                       const shouldCheck = adpackLoaded && trimmed.length > 0
@@ -839,9 +948,37 @@ export default function DynamicLinkBuilder({
                       // --- 5. Build the Input ONCE ---
                       const inputEl = (
                         <Input
-                          value={plu}
-                          onChange={(e) => setPLU(i, e.target.value)}
-                          onBlur={() => setPLU(i, plu.trim(), false)}
+                          key={`plu-${i}`}
+                          value={plu ?? ""}
+                          onFocus={() => {
+                            activePluIndexRef.current = i
+                          }}
+                          onChange={(e) => {
+                            const next = e.target.value
+                            setPluDrafts((prev) => {
+                              const updated = [...prev]
+                              updated[i] = next
+                              return updated
+                            })
+                          }}
+                          onBlur={(e) => {
+                            const trimmedValue = e.target.value.trim()
+                            const nextPlus = [...plus]
+                            nextPlus[i] = trimmedValue
+                            setPluDrafts((prev) => {
+                              const updated = [...prev]
+                              updated[i] = trimmedValue
+                              return updated
+                            })
+                            activePluIndexRef.current = null
+                            setPLU(i, trimmedValue, true)
+                            commitState({
+                              category,
+                              brand,
+                              extension,
+                              plus: nextPlus,
+                            })
+                          }}
                           onPaste={(e) => {
                             if (pluDisabled) return
                             const text = e.clipboardData.getData("text")
@@ -1072,5 +1209,7 @@ export default function DynamicLinkBuilder({
     </div>
   )
 }
+)
 
+export default DynamicLinkBuilder
 

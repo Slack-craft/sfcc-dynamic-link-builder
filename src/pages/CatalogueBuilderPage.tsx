@@ -227,6 +227,7 @@ export default function CatalogueBuilderPage() {
   const [showMissingOnly, setShowMissingOnly] = useState(false)
   const [pdfAssetNames, setPdfAssetNames] = useState<Record<string, string>>({})
   const [offerDebugOpen, setOfferDebugOpen] = useState(false)
+  const [offerTextDebugOpen, setOfferTextDebugOpen] = useState(false)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
@@ -768,6 +769,7 @@ export default function CatalogueBuilderPage() {
       offer,
       title: nextTitle,
       titleEditedManually: shouldSetTitle ? false : selectedTile.titleEditedManually,
+      offerUpdatedAt: Date.now(),
     })
     upsertProject(updated)
     toast.success("Offer extracted.")
@@ -840,6 +842,7 @@ export default function CatalogueBuilderPage() {
           extractedText: text,
           title: nextTitle,
           titleEditedManually: shouldSetTitle ? false : tile.titleEditedManually,
+          offerUpdatedAt: Date.now(),
         }
       }
 
@@ -1522,7 +1525,9 @@ export default function CatalogueBuilderPage() {
                         </div>
                         {tile.title ? (
                           <div className="mt-1 text-xs text-muted-foreground">
-                            {tile.title}
+                            {tile.title.length > 80
+                              ? `${tile.title.slice(0, 80)}…`
+                              : tile.title}
                           </div>
                         ) : null}
                       </button>
@@ -1564,6 +1569,17 @@ export default function CatalogueBuilderPage() {
                           }}
                           placeholder="Tile title"
                         />
+                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                          <span>
+                            Brand: {selectedTile.offer?.brand?.label ?? "—"}
+                          </span>
+                          <span>
+                            % Off: {selectedTile.offer?.percentOff?.raw ?? "—"}
+                          </span>
+                          <span>
+                            % Off: {selectedTile.offer?.percentOff?.raw ?? "—"}
+                          </span>
+                        </div>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="tile-status">Status</Label>
@@ -1632,29 +1648,60 @@ export default function CatalogueBuilderPage() {
                               {selectedTile.offer?.title ?? "—"}
                             </div>
                             <div>
-                              <span className="font-medium">Percent:</span>{" "}
-                              {selectedTile.offer?.percentOff?.raw ?? "—"}
-                            </div>
-                            <div>
                               <span className="font-medium">Brand:</span>{" "}
                               {selectedTile.offer?.brand?.label ?? "—"}
-                            </div>
-                            <div>
-                              <span className="font-medium">Price:</span>{" "}
-                              {selectedTile.offer?.price?.raw ?? "—"}
-                              {selectedTile.offer?.price?.qualifier
-                                ? ` (${selectedTile.offer?.price?.qualifier})`
-                                : ""}
-                            </div>
-                            <div>
-                              <span className="font-medium">Save:</span>{" "}
-                              {selectedTile.offer?.save?.raw ?? "—"}
                             </div>
                             <div>
                               <span className="font-medium">Details:</span>{" "}
                               {selectedTile.offer?.productDetails ?? "—"}
                             </div>
                           </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Label>Debug: Extracted Text</Label>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setOfferTextDebugOpen((prev) => !prev)}
+                        >
+                          {offerTextDebugOpen ? "Hide" : "Show"}
+                        </Button>
+                      </div>
+                      {offerTextDebugOpen ? (
+                        <div className="space-y-2">
+                          <div className="text-xs text-muted-foreground">
+                            Offer updated:{" "}
+                            {selectedTile.offerUpdatedAt
+                              ? new Date(selectedTile.offerUpdatedAt).toLocaleString()
+                              : "—"}
+                          </div>
+                          {selectedTile.extractedText ||
+                          selectedTile.offer?.source?.rawText ? (
+                            <Textarea
+                              readOnly
+                              value={
+                                selectedTile.extractedText ??
+                                selectedTile.offer?.source?.rawText ??
+                                ""
+                              }
+                              className="min-h-[120px] text-xs"
+                            />
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              No extracted text stored for this tile.
+                            </div>
+                          )}
+                          {selectedTile.offer?.source?.cleanedText ? (
+                            <Textarea
+                              readOnly
+                              value={selectedTile.offer.source.cleanedText}
+                              className="min-h-[80px] text-xs"
+                            />
+                          ) : null}
                         </div>
                       ) : null}
                     </div>

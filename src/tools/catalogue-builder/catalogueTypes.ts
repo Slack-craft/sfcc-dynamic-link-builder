@@ -17,6 +17,7 @@ export type Tile = {
   extractedText?: string
   extractedPluFlags?: boolean[]
   offer?: OfferExtraction
+  offerUpdatedAt?: number
   titleEditedManually?: boolean
   pdfMappingStatus?: "missing"
   pdfMappingReason?: string

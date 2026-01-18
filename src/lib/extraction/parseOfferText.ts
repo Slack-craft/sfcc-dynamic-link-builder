@@ -19,6 +19,15 @@ function norm(value: string) {
     .trim()
 }
 
+function lineHasBrand(line: string, brands: BrandOption[]) {
+  const lineNorm = norm(line)
+  if (!lineNorm) return false
+  return brands.some((brand) => {
+    const labelNorm = norm(brand.label)
+    return labelNorm ? lineNorm.includes(labelNorm) : false
+  })
+}
+
 function findPercentOff(lines: string[]) {
   const patterns: Array<{ regex: RegExp; type: "upTo" | "save" | "basic" }> = [
     { regex: /up\s*to\s*(\d{1,3})\s*%/i, type: "upTo" },
@@ -41,66 +50,8 @@ function findPercentOff(lines: string[]) {
   return undefined
 }
 
-function findPrice(lines: string[], normalized: string) {
-  const priceRegex = /\$\s*\d+(?:\.\d{2})?/g
-  const qualifierRegex = /(each|ea|pair|set|pack|kit|only|from|per\s+\w+)/i
-  const qualifierPreferredRegex = /(each|ea|per|pair|set|pack|kit|for)/i
-  const matches = Array.from(normalized.matchAll(priceRegex))
-  if (matches.length === 0) return undefined
-
-  let chosen: RegExpMatchArray | undefined
-  let chosenLine = normalized
-  for (const line of lines) {
-    if (!qualifierPreferredRegex.test(line)) continue
-    const lineMatch = line.match(priceRegex)
-    if (lineMatch) {
-      chosen = lineMatch as unknown as RegExpMatchArray
-      chosenLine = line
-      break
-    }
-  }
-
-  if (!chosen) {
-    chosen = matches[0] as RegExpMatchArray
-    chosenLine = normalized
-    for (const line of lines) {
-      if (line.includes(chosen[0])) {
-        chosenLine = line
-        break
-      }
-    }
-  }
-
-  const raw = chosen[0]
-  const numeric = Number(raw.replace(/\$/g, "").trim())
-  if (!Number.isFinite(numeric)) return undefined
-
-  let qualifier: string | undefined
-  const index = chosenLine.indexOf(raw)
-  if (index !== -1) {
-    const after = chosenLine.slice(index + raw.length, index + raw.length + 12)
-    const qualMatch = after.match(qualifierRegex)
-    if (qualMatch) qualifier = qualMatch[0].trim()
-  }
-
-  return { raw, value: numeric, qualifier }
-}
-
-function findSave(lines: string[]) {
-  const saveRegex = /save\s*\$\s*\d+(?:\.\d{2})?/i
-  for (const line of lines) {
-    const match = line.match(saveRegex)
-    if (!match) continue
-    const raw = match[0]
-    const numeric = Number(raw.replace(/save/i, "").replace(/\$/g, "").trim())
-    const value = Number.isFinite(numeric) ? numeric : undefined
-    return { raw: raw.replace(/\s+/g, " ").trim(), value }
-  }
-  return undefined
-}
-
-function findBrand(normalized: string, brands: BrandOption[]) {
-  const textNorm = norm(normalized)
+function findBrand(candidateText: string, brands: BrandOption[]) {
+  const textNorm = norm(candidateText)
   let best:
     | { label: string; matchedFrom: string; score: number; len: number }
     | undefined
@@ -148,22 +99,44 @@ export function parseOfferText(
   rawText: string,
   brands: BrandOption[]
 ): OfferExtraction {
-  const normalized = normalizeText(rawText)
   const lines = rawText
     .split(/\r?\n/)
     .map((line) => normalizeText(line))
     .filter(Boolean)
-  const percentOff = findPercentOff(lines.length > 0 ? lines : [normalized])
-  const price = findPrice(lines.length > 0 ? lines : [normalized], normalized)
-  const save = findSave(lines.length > 0 ? lines : [normalized])
-  const brand = findBrand(normalized, brands)
+  const filteredLines = lines
+    .filter((line) => !/^also available/i.test(line))
+    .filter((line) => {
+      const hasPluParen = /\(\s*\d{4,8}\s*\)/.test(line)
+      const hasPercent = /\b\d{1,3}\s*%\b/i.test(line)
+      if (!hasPluParen) return true
+      if (hasPercent) return true
+      return lineHasBrand(line, brands)
+    })
+  const normalized =
+    filteredLines.length > 0 ? filteredLines.join(" ") : normalizeText(rawText)
+  const percentOff = findPercentOff(
+    filteredLines.length > 0 ? filteredLines : [normalized]
+  )
+  const candidateText =
+    filteredLines.length > 0
+      ? filteredLines.slice(0, 3).join(" ")
+      : normalized.slice(0, 220)
+  let brand = findBrand(candidateText, brands)
+  if (
+    /eligible brands include|credit|club member|when you spend/i.test(normalized)
+  ) {
+    brand = undefined
+  }
 
   let cleaned = normalized
   cleaned = removeSegment(cleaned, percentOff?.raw)
-  cleaned = removeSegment(cleaned, price?.raw)
-  cleaned = removeSegment(cleaned, save?.raw)
   cleaned = removeSegment(cleaned, brand?.matchedFrom ?? brand?.label)
+  cleaned = cleaned.replace(/\b\d{1,3}\s*%\s*off\b/gi, " ")
+  cleaned = cleaned.replace(/\$\s*\d+(?:\s+\d{2})?(?:\.\d{2})?/g, " ")
+  cleaned = cleaned.replace(/\$/g, " ")
+  cleaned = cleaned.replace(/\b(each|ea|kit|pack|set|pair|pk)\b/gi, " ")
   cleaned = stripPluTokensFromText(cleaned)
+  cleaned = cleaned.replace(/\bsave\b/gi, " ")
   cleaned = cleaned.replace(/[-|•]+/g, " ").replace(/\s+/g, " ").trim()
 
   const productDetails = cleaned || undefined
@@ -176,18 +149,11 @@ export function parseOfferText(
   } else if (brand?.label) {
     parts.push(brand.label)
   }
-  if (price) {
-    parts.push(price.qualifier ? `${price.raw} ${price.qualifier}` : price.raw)
-  }
-  if (save?.raw) parts.push(save.raw)
-
   const title = parts.length > 0 ? parts.join(" - ") : undefined
 
   return {
     percentOff,
     brand,
-    price,
-    save,
     productDetails,
     title,
     source: {

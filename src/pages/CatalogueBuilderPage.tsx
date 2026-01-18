@@ -47,6 +47,7 @@ import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
 import { extractTextFromRect, loadPdfDocument, type PdfRect } from "@/tools/catalogue-builder/pdfTextExtract"
 import { parseOfferText } from "@/lib/extraction/parseOfferText"
 import { extractPlusFromPdfText } from "@/lib/extraction/pluUtils"
+import { buildPreviewUrl } from "@/lib/preview/buildPreviewUrl"
  
 import type {
   CatalogueProject,
@@ -223,6 +224,8 @@ export default function CatalogueBuilderPage() {
   const [tileThumbUrls, setTileThumbUrls] = useState<Record<string, string>>({})
   const tileThumbUrlsRef = useRef<Record<string, string>>({})
   const [selectedColorUrl, setSelectedColorUrl] = useState<string | null>(null)
+  const [iframeSrc, setIframeSrc] = useState("")
+  const [iframeKey, setIframeKey] = useState(0)
   const [pdfExtractRunning, setPdfExtractRunning] = useState(false)
   const [showMissingOnly, setShowMissingOnly] = useState(false)
   const [pdfAssetNames, setPdfAssetNames] = useState<Record<string, string>>({})
@@ -458,6 +461,7 @@ export default function CatalogueBuilderPage() {
     () => tiles.find((tile) => tile.id === selectedTileId) ?? null,
     [tiles, selectedTileId]
   )
+  const previewUrl = buildPreviewUrl(draftLinkOutput, project?.region)
 
   function setProjectStage(nextStage: ProjectStage) {
     if (!project) return
@@ -1543,16 +1547,71 @@ export default function CatalogueBuilderPage() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {selectedColorUrl ? (
-                        <div className="space-y-2">
-                          <div className="text-xs font-medium uppercase text-muted-foreground">
-                            Image
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <div className="text-xs font-medium uppercase text-muted-foreground">
+                              Image
+                            </div>
+                            <div className="w-full overflow-hidden rounded-md border border-border bg-muted/50 p-3">
+                              <img
+                                src={selectedColorUrl}
+                                alt={selectedTile.originalFileName}
+                                className="max-h-[360px] w-full h-auto rounded-md object-contain"
+                              />
+                            </div>
                           </div>
-                          <div className="w-full overflow-hidden rounded-md border border-border bg-muted/50 p-3">
-                            <img
-                              src={selectedColorUrl}
-                              alt={selectedTile.originalFileName}
-                              className="max-h-[360px] w-full h-auto rounded-md object-contain"
-                            />
+                          <div className="space-y-2">
+                            <div>
+                              <div className="text-xs font-medium uppercase text-muted-foreground">
+                                Web Preview
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {previewUrl}
+                              </div>
+                            </div>
+                            <div className="w-full overflow-hidden rounded-md border border-border bg-muted/20">
+                              {iframeSrc ? (
+                                <iframe
+                                  key={iframeKey}
+                                  src={iframeSrc}
+                                  title="Web preview"
+                                  className="h-[360px] w-full rounded-md"
+                                />
+                              ) : (
+                                <div className="flex h-[360px] items-center justify-center text-xs text-muted-foreground">
+                                  Preview not loaded.
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setIframeSrc(previewUrl)}
+                              >
+                                Preview
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setIframeKey((prev) => prev + 1)
+                                  setIframeSrc(previewUrl)
+                                }}
+                              >
+                                Refresh Preview
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
+                              >
+                                Open in New Tab
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       ) : (

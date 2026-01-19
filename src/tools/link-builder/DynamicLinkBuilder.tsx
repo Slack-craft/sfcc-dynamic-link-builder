@@ -54,6 +54,8 @@ const HISTORY_STORAGE_KEY = "sca_dynamic_link_builder_history_v1"
 // -----------------------------
 
 const ADPACK_STORAGE_KEY = "sca_dynamic_link_builder_adpack_plus_v1"
+const PLU_PER_ROW = 3
+const MIN_VISIBLE_PLUS = 3
 
 function parsePlusFromText(raw: string): string[] {
   return raw
@@ -63,11 +65,12 @@ function parsePlusFromText(raw: string): string[] {
 }
 
 function normalizeState(state?: Partial<LinkBuilderState>): LinkBuilderState {
+  const baseLength = Math.max(20, state?.plus?.length ?? 0)
   return {
     category: state?.category ?? null,
     brand: state?.brand ?? null,
     extension: state?.extension ?? "",
-    plus: Array.from({ length: 20 }, (_, i) => state?.plus?.[i] ?? ""),
+    plus: Array.from({ length: baseLength }, (_, i) => state?.plus?.[i] ?? ""),
   }
 }
 
@@ -184,14 +187,7 @@ function SearchableSelect(props: {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Label>{label}</Label>
-        {value ? (
-          <Button type="button" variant="ghost" size="sm" onClick={() => onChange(null)} disabled={disabled}>
-            Clear
-          </Button>
-        ) : null}
-      </div>
+      <Label>{label}</Label>
 
       <Popover
         open={open}
@@ -281,7 +277,6 @@ function SearchableSelect(props: {
         </PopoverContent>
       </Popover>
 
-      {disabled ? <p className="text-xs text-muted-foreground">Disabled by selection rules.</p> : null}
     </div>
   )
 }
@@ -298,6 +293,9 @@ type DynamicLinkBuilderProps = {
   onLiveLinkChange?: (value: string) => void
   liveLinkEditable?: boolean
   liveLinkInputRef?: React.RefObject<HTMLInputElement | null>
+  onOpenPreview?: () => void
+  onLinkViaPreview?: () => void
+  previewStatusText?: string
   mode?: "full" | "embedded"
   hideHistory?: boolean
   hideAdpack?: boolean
@@ -319,6 +317,9 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       onLiveLinkChange,
       liveLinkEditable = false,
       liveLinkInputRef,
+      onOpenPreview,
+      onLinkViaPreview,
+      previewStatusText,
       mode = "full",
       hideHistory = false,
       hideAdpack = false,
@@ -557,7 +558,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   }
 
   function clearPLUs() {
-    const nextPlus = Array.from({ length: 20 }, () => "")
+    const nextPlus = Array.from({ length: Math.max(20, plus.length) }, () => "")
     setPlus(nextPlus)
     setPluDrafts(nextPlus)
     updateExtractedFlags((flags) => flags.map(() => false))
@@ -595,20 +596,22 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       .filter((t) => t.length > 0)
 
     if (tokens.length === 0) return
-    const nextPlus = [...plus]
+    const nextPlus = [...pluDrafts]
     for (let i = 0; i < tokens.length; i++) {
       const idx = startIndex + i
-      if (idx >= nextPlus.length) break
+      if (idx >= nextPlus.length) {
+        nextPlus.length = idx + 1
+      }
       nextPlus[idx] = tokens[i]
     }
 
-    setPlus(nextPlus)
     setPluDrafts(nextPlus)
+    setPlus(nextPlus)
     clearExtractedAt(
-      tokens.map((_, i) => startIndex + i).filter((idx) => idx < plus.length)
+      tokens.map((_, i) => startIndex + i).filter((idx) => idx < nextPlus.length)
     )
 
-    toast.success(`Pasted ${Math.min(tokens.length, 20 - startIndex)} PLU(s)`)
+    toast.success(`Pasted ${tokens.length} PLU(s)`)
     commitState({
       category,
       brand,
@@ -630,13 +633,14 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     setCategory(restoredCategory)
     setBrand(restoredBrand)
     setExtension(item.extension ?? "")
-    setPlus(Array.from({ length: 20 }, (_, i) => item.plus?.[i] ?? ""))
-    setPluDrafts(Array.from({ length: 20 }, (_, i) => item.plus?.[i] ?? ""))
+    const baseLength = Math.max(20, item.plus?.length ?? 0)
+    setPlus(Array.from({ length: baseLength }, (_, i) => item.plus?.[i] ?? ""))
+    setPluDrafts(Array.from({ length: baseLength }, (_, i) => item.plus?.[i] ?? ""))
     commitState({
       category: restoredCategory,
       brand: restoredBrand,
       extension: item.extension ?? "",
-      plus: Array.from({ length: 20 }, (_, i) => item.plus?.[i] ?? ""),
+      plus: Array.from({ length: baseLength }, (_, i) => item.plus?.[i] ?? ""),
     })
 
     toast.success("Restored saved link parameters")
@@ -690,7 +694,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       category,
       brand,
       extension,
-      plus: Array.from({ length: 20 }, (_, i) => (plus[i] ?? "").trim()),
+      plus: Array.from({ length: Math.max(20, plus.length) }, (_, i) => (plus[i] ?? "").trim()),
     }
 
     setSavedLinks((prev) => {
@@ -734,6 +738,27 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   }
 
   useImperativeHandle(ref, () => ({ commitNow }), [commitNow])
+
+  const visiblePluCount = useMemo(() => {
+    let lastNonEmpty = -1
+    for (let i = pluDrafts.length - 1; i >= 0; i -= 1) {
+      if (pluDrafts[i]?.trim()) {
+        lastNonEmpty = i
+        break
+      }
+    }
+    if (lastNonEmpty === -1) return MIN_VISIBLE_PLUS
+    const needed = Math.ceil((lastNonEmpty + 2) / PLU_PER_ROW) * PLU_PER_ROW
+    return Math.max(MIN_VISIBLE_PLUS, needed)
+  }, [pluDrafts])
+
+  const visiblePluDrafts = useMemo(() => {
+    if (pluDrafts.length >= visiblePluCount) return pluDrafts.slice(0, visiblePluCount)
+    return [
+      ...pluDrafts,
+      ...Array.from({ length: visiblePluCount - pluDrafts.length }, () => ""),
+    ]
+  }, [pluDrafts, visiblePluCount])
 
   // Ctrl+S / Cmd+S shortcut
   useEffect(() => {
@@ -818,7 +843,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
             {/* Base selection */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="font-medium">Base Link Type (pick one)</h2>
+                <h2 className="font-medium">Base Link (pick one)</h2>
                 <Button
                   type="button"
                   variant="ghost"
@@ -838,47 +863,48 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                 </Button>
               </div>
 
-              <SearchableSelect
-                label="Category"
-                options={CATEGORY_OPTIONS}
-                value={category}
-                onChange={(opt) => {
-                  const nextBrand = opt ? null : brand
-                  setCategory(opt)
-                  if (opt) setBrand(null)
-                  commitState({
-                    category: opt,
-                    brand: nextBrand,
-                    extension,
-                    plus,
-                  })
-                }}
-                disabled={categoryDisabled}
-                placeholder="Type to search categories"
+              <div className="grid gap-4 md:grid-cols-2">
+                <SearchableSelect
+                  label="Category"
+                  options={CATEGORY_OPTIONS}
+                  value={category}
+                  onChange={(opt) => {
+                    const nextBrand = opt ? null : brand
+                    setCategory(opt)
+                    if (opt) setBrand(null)
+                    commitState({
+                      category: opt,
+                      brand: nextBrand,
+                      extension,
+                      plus,
+                    })
+                  }}
+                  disabled={categoryDisabled}
+                placeholder={categoryDisabled ? "Disabled by selection rules." : "Type to search categories"}
                 onCommitNext={() => extensionRef.current?.focus()}
                 triggerRef={categoryTriggerRef}
               />
 
-
-              <SearchableSelect
-                label="Brand"
-                options={BRAND_OPTIONS}
-                value={brand}
-                onChange={(opt) => {
-                  const nextCategory = opt ? null : category
-                  setBrand(opt)
-                  if (opt) setCategory(null)
-                  commitState({
-                    category: nextCategory,
-                    brand: opt,
-                    extension,
-                    plus,
-                  })
-                }}
-                disabled={brandDisabled}
-                placeholder="Type to search brands"
+                <SearchableSelect
+                  label="Brand"
+                  options={BRAND_OPTIONS}
+                  value={brand}
+                  onChange={(opt) => {
+                    const nextCategory = opt ? null : category
+                    setBrand(opt)
+                    if (opt) setCategory(null)
+                    commitState({
+                      category: nextCategory,
+                      brand: opt,
+                      extension,
+                      plus,
+                    })
+                  }}
+                  disabled={brandDisabled}
+                placeholder={brandDisabled ? "Disabled by selection rules." : "Type to search brands"}
                 onCommitNext={() => extensionRef.current?.focus()}
               />
+              </div>
 
             </div>
 
@@ -899,7 +925,12 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
               </div>
 
               <div className="space-y-2">
-                <Label>Extension (paste a full URL)</Label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label>Extension (paste a full URL)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    The filter selection will be extracted automatically.
+                  </p>
+                </div>
                 <Textarea
                   ref={extensionRef}
                   value={extension}
@@ -912,7 +943,11 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                       plus,
                     })
                   }
-                  placeholder="https://www.supercheapauto.com.au/spare-parts?prefn1=...&sz=36"
+                  placeholder={
+                    extensionDisabled
+                      ? "Disabled by selection rules."
+                      : "https://www.supercheapauto.com.au/spare-parts?prefn1=...&sz=36"
+                  }
                   disabled={extensionDisabled}
                 />
 
@@ -920,18 +955,14 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                   <p className="text-sm text-destructive">
                     Extension must include a <code>?</code> (or be query params like <code>prefn1=...&prefv1=...</code>).
                   </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    The filter selection will be extracted automatically.
-                  </p>
-                )}
+                ) : null}
               </div>
 
               <div className="space-y-2">
                 <Label>PLUs (1-20)</Label>
                 <TooltipProvider delayDuration={250}>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {pluDrafts.map((plu, i) => {
+                  <div className="grid grid-cols-3 gap-2">
+                    {visiblePluDrafts.map((plu, i) => {
                       // --- 1. Normalise the current PLU ---
                       const trimmed = (plu ?? "").trim()
 
@@ -965,6 +996,9 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                             const next = e.target.value
                             setPluDrafts((prev) => {
                               const updated = [...prev]
+                              if (updated.length <= i) {
+                                updated.length = i + 1
+                              }
                               updated[i] = next
                               return updated
                             })
@@ -972,9 +1006,15 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                           onBlur={(e) => {
                             const trimmedValue = e.target.value.trim()
                             const nextPlus = [...plus]
+                            if (nextPlus.length <= i) {
+                              nextPlus.length = i + 1
+                            }
                             nextPlus[i] = trimmedValue
                             setPluDrafts((prev) => {
                               const updated = [...prev]
+                              if (updated.length <= i) {
+                                updated.length = i + 1
+                              }
                               updated[i] = trimmedValue
                               return updated
                             })
@@ -1027,7 +1067,22 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
         {/* Output */}
         <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]">
           <CardHeader>
-            <CardTitle>Output</CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>Output</CardTitle>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                {previewStatusText ? <span>{previewStatusText}</span> : null}
+                {onOpenPreview ? (
+                  <Button type="button" size="sm" variant="outline" onClick={onOpenPreview}>
+                    Open Preview
+                  </Button>
+                ) : null}
+                {onLinkViaPreview ? (
+                  <Button type="button" size="sm" variant="outline" onClick={onLinkViaPreview}>
+                    Link via Preview
+                  </Button>
+                ) : null}
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-2">

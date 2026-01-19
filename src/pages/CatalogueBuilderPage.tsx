@@ -1561,32 +1561,55 @@ export default function CatalogueBuilderPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold">Catalogue Builder</h2>
-        <p className="text-sm text-muted-foreground">
-          Manage tiles for your catalogue project.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Catalogue Builder</h2>
+          <p className="text-sm text-muted-foreground">
+            Manage tiles for your catalogue project.
+          </p>
+        </div>
+        {projectBar}
       </div>
-      {projectBar}
-      <div className="flex flex-wrap items-center gap-2">
-        {project.stage === "setup" ? (
-          <Button
-            type="button"
-            onClick={() => setProjectStage("pdf-detect")}
-            disabled={!canContinueToDetection}
-          >
-            Continue to PDF Detection
-          </Button>
-        ) : null}
-        {project.stage === "pdf-detect" ? (
-          <Button type="button" onClick={() => setProjectStage("catalogue")}>
-            Finish detection
-          </Button>
-        ) : null}
-        {project.stage === "catalogue" ? (
-          <Button type="button" variant="outline" onClick={() => setProjectStage("pdf-detect")}>
-            Back to detection
-          </Button>
+      <Separator />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {project.stage === "setup" ? (
+            <Button
+              type="button"
+              onClick={() => setProjectStage("pdf-detect")}
+              disabled={!canContinueToDetection}
+            >
+              Continue to PDF Detection
+            </Button>
+          ) : null}
+          {project.stage === "pdf-detect" ? (
+            <Button type="button" onClick={() => setProjectStage("catalogue")}>
+              Finish detection
+            </Button>
+          ) : null}
+          {project.stage === "catalogue" ? (
+            <Button type="button" variant="outline" onClick={() => setProjectStage("pdf-detect")}>
+              Back to detection
+            </Button>
+          ) : null}
+        </div>
+        {project.stage === "catalogue" && project.tiles.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={extractPlusFromPdf}
+              disabled={pdfExtractRunning}
+            >
+              Extract PLUs from PDF
+            </Button>
+            <Button type="button" variant="outline" onClick={confirmReplaceAll}>
+              Replace All Images
+            </Button>
+            <Button type="button" variant="outline" onClick={confirmClearAll}>
+              Clear All Tiles
+            </Button>
+          </div>
         ) : null}
       </div>
       {project.stage === "setup" ? (
@@ -1637,43 +1660,12 @@ export default function CatalogueBuilderPage() {
       ) : null}
       {project.stage === "catalogue" ? (
         <Card>
-          <CardHeader>
+          <CardHeader className="pt-5 pb-1">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle>{project.name}</CardTitle>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setProjectStage("pdf-detect")}
-              >
-                Back to PDF detection
-              </Button>
+              <CardTitle>{project.name} - Tiles: <span className="font-medium text-foreground">{project.tiles.length}</span></CardTitle>
             </div>
           </CardHeader>
         <CardContent>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-muted-foreground">
-              Tiles: <span className="font-medium text-foreground">{project.tiles.length}</span>
-            </div>
-            {project.tiles.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={extractPlusFromPdf}
-                  disabled={pdfExtractRunning}
-                >
-                  Extract PLUs from PDF
-                </Button>
-                <Button type="button" variant="outline" onClick={confirmReplaceAll}>
-                  Replace All Images
-                </Button>
-                <Button type="button" variant="outline" onClick={confirmClearAll}>
-                  Clear All Tiles
-                </Button>
-              </div>
-            ) : null}
-          </div>
           {SHOW_DETECTION_EXPORT ? (
             <Card className="mt-4">
               <CardHeader>
@@ -1773,7 +1765,30 @@ export default function CatalogueBuilderPage() {
                 {selectedTile ? (
                   <Card>
                     <CardHeader>
-                      <CardTitle>{selectedTile.id}</CardTitle>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <CardTitle>{selectedTile.id}</CardTitle>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button type="button" onClick={commitAndSaveSelectedTile}>
+                            Save (Ctrl+S)
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => {
+                              commitAndSaveSelectedTile()
+                              selectTileByOffset(1)
+                            }}
+                          >
+                            Save & Next
+                          </Button>
+                          <Button type="button" variant="outline" onClick={() => selectTileByOffset(-1)}>
+                            Previous
+                          </Button>
+                          <Button type="button" variant="outline" onClick={() => selectTileByOffset(1)}>
+                            Next
+                          </Button>
+                        </div>
+                      </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {selectedColorUrl ? (
@@ -1844,42 +1859,11 @@ export default function CatalogueBuilderPage() {
                             </Card>
                           </div>
                           <div className="space-y-2">
-                            <div>
-                              <div className="text-xs font-medium uppercase text-muted-foreground">
-                                Web Preview
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                {previewUrl}
-                              </div>
-                            </div>
-                            <div className="rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-                              {extensionStatus === "available"
-                                ? "Extension enabled"
-                                : "Extension not installed — manual paste required"}
-                            </div>
                             {awaitingManualLink ? (
                               <div className="text-xs text-muted-foreground">
                                 Click back into the app to paste into Live Link.
                               </div>
                             ) : null}
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={handleOpenPreview}
-                              >
-                                Open Preview
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={handleLinkViaPreview}
-                              >
-                                Link via Preview
-                              </Button>
-                            </div>
                           </div>
                         </div>
                       ) : (
@@ -1899,6 +1883,13 @@ export default function CatalogueBuilderPage() {
                           onLiveLinkChange={setDraftLiveLinkUrl}
                           liveLinkEditable={extensionStatus !== "available"}
                           liveLinkInputRef={liveLinkInputRef}
+                          onOpenPreview={handleOpenPreview}
+                          onLinkViaPreview={handleLinkViaPreview}
+                          previewStatusText={
+                            extensionStatus === "available"
+                              ? "Extension enabled"
+                              : "Extension not installed — manual paste required"
+                          }
                           extractedPluFlags={draftExtractedFlags}
                           onExtractedPluFlagsChange={setDraftExtractedFlags}
                         />
@@ -1991,27 +1982,6 @@ export default function CatalogueBuilderPage() {
                         </div>
                       ) : null}
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button type="button" onClick={commitAndSaveSelectedTile}>
-                        Save (Ctrl+S)
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => {
-                          commitAndSaveSelectedTile()
-                          selectTileByOffset(1)
-                        }}
-                      >
-                        Save & Next
-                      </Button>
-                      <Button type="button" variant="outline" onClick={() => selectTileByOffset(-1)}>
-                        Previous
-                      </Button>
-                        <Button type="button" variant="outline" onClick={() => selectTileByOffset(1)}>
-                          Next
-                        </Button>
-                      </div>
                     </CardContent>
                   </Card>
                 ) : (

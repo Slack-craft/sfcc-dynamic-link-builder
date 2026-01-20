@@ -349,6 +349,7 @@ export default function LinkBuilderPage() {
       facetSelectedArticleTypes={facetSelectedArticleTypes}
       onFacetSelectedBrandsChange={setFacetSelectedBrands}
       onFacetSelectedArticleTypesChange={setFacetSelectedArticleTypes}
+      detectedBrands={[]}
       liveLinkUrl={liveLinkUrl}
       onLiveLinkChange={setLiveLinkUrl}
         liveLinkEditable={extensionStatus !== "available"}

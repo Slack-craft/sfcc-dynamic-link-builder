@@ -303,6 +303,7 @@ type DynamicLinkBuilderProps = {
   facetSelectedArticleTypes?: string[]
   onFacetSelectedBrandsChange?: (next: string[]) => void
   onFacetSelectedArticleTypesChange?: (next: string[]) => void
+  detectedBrands?: string[]
   liveLinkUrl?: string
   onLiveLinkChange?: (value: string) => void
   liveLinkEditable?: boolean
@@ -336,6 +337,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       facetSelectedArticleTypes,
       onFacetSelectedBrandsChange,
       onFacetSelectedArticleTypesChange,
+      detectedBrands,
       liveLinkUrl,
       onLiveLinkChange,
       liveLinkEditable = false,
@@ -1143,6 +1145,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           selectedArticleTypes={facetSelectedArticleTypes}
           onSelectedBrandsChange={onFacetSelectedBrandsChange}
           onSelectedArticleTypesChange={onFacetSelectedArticleTypesChange}
+          detectedBrands={detectedBrands}
           onApplyExtension={(query) => {
             const nextExtension = query || ""
             setExtension(nextExtension)

@@ -1,4 +1,4 @@
-import { useMemo, type MutableRefObject } from "react"
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,6 +24,7 @@ type FacetBuilderCardProps = {
   selectedArticleTypes?: string[]
   onSelectedBrandsChange?: (next: string[]) => void
   onSelectedArticleTypesChange?: (next: string[]) => void
+  detectedBrands?: string[]
 }
 
 function buildQueryFromSelections(selected: Record<string, string[]>) {
@@ -46,9 +47,13 @@ export function FacetBuilderCard({
   selectedArticleTypes = [],
   onSelectedBrandsChange,
   onSelectedArticleTypesChange,
+  detectedBrands = [],
 }: FacetBuilderCardProps) {
   const setSelectedBrands = onSelectedBrandsChange ?? (() => {})
   const setSelectedArticleTypes = onSelectedArticleTypesChange ?? (() => {})
+  const [showAllBrands, setShowAllBrands] = useState(false)
+  const [brandSearch, setBrandSearch] = useState("")
+  const appliedDetectedRef = useRef<string | null>(null)
 
   const brandOptions = useMemo(() => {
     if (!dataset) return []
@@ -62,6 +67,7 @@ export function FacetBuilderCard({
 
   const articleTypeOptions = useMemo(() => {
     if (!dataset) return []
+    if (selectedBrands.length === 0) return []
     const values = new Set<string>()
     dataset.rowsRef.current.forEach((row) => {
       const brandValue = row.brand?.trim()
@@ -97,6 +103,58 @@ export function FacetBuilderCard({
     }
   }
 
+  function normalizeBrand(value: string) {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  }
+
+  const matchedBrandValues = useMemo(() => {
+    if (!dataset || detectedBrands.length === 0) return []
+    const normalizedOptions = brandOptions.map((option) => ({
+      value: option,
+      normalized: normalizeBrand(option),
+    }))
+
+    const matches: string[] = []
+    detectedBrands.forEach((detected) => {
+      const normDetected = normalizeBrand(detected)
+      if (!normDetected) return
+      const exact = normalizedOptions.find((opt) => opt.normalized === normDetected)
+      if (exact) {
+        matches.push(exact.value)
+        return
+      }
+      const partials = normalizedOptions.filter(
+        (opt) =>
+          opt.normalized.includes(normDetected) || normDetected.includes(opt.normalized)
+      )
+      if (partials.length === 0) return
+      partials.sort((a, b) => a.normalized.length - b.normalized.length)
+      matches.push(partials[0].value)
+    })
+
+    return Array.from(new Set(matches))
+  }, [brandOptions, dataset, detectedBrands])
+
+  useEffect(() => {
+    if (!dataset) return
+    if (selectedBrands.length > 0) return
+    if (matchedBrandValues.length === 0) return
+    const detectedKey = matchedBrandValues.join("|")
+    if (appliedDetectedRef.current === detectedKey) return
+    appliedDetectedRef.current = detectedKey
+    setSelectedBrands(matchedBrandValues)
+  }, [dataset, matchedBrandValues, selectedBrands.length, setSelectedBrands])
+
+  const filteredBrandOptions = useMemo(() => {
+    const query = brandSearch.trim().toLowerCase()
+    if (!query) return brandOptions
+    return brandOptions.filter((brand) => brand.toLowerCase().includes(query))
+  }, [brandOptions, brandSearch])
+
   return (
     <Card className="lg:col-span-1 flex flex-col">
       <CardHeader>
@@ -122,44 +180,95 @@ export function FacetBuilderCard({
 
         <div className="space-y-2">
           <Label>Brand</Label>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {brandOptions.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No brands loaded.</p>
+          <div className="space-y-2">
+            {matchedBrandValues.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Detected Brands</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {matchedBrandValues.map((brand) => (
+                    <label key={brand} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={selectedBrands.includes(brand)}
+                        onChange={() => toggleSelection(brand, selectedBrands, setSelectedBrands)}
+                      />
+                      <span>{brand}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
             ) : (
-              brandOptions.map((brand) => (
-                <label key={brand} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={selectedBrands.includes(brand)}
-                    onChange={() => toggleSelection(brand, selectedBrands, setSelectedBrands)}
-                  />
-                  <span>{brand}</span>
-                </label>
-              ))
+              <p className="text-xs text-muted-foreground">
+                No brand detected for this tile yet.
+              </p>
             )}
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllBrands((prev) => !prev)}
+              disabled={brandOptions.length === 0}
+            >
+              {showAllBrands ? "Hide brands" : "Change brands"}
+            </Button>
+
+            {showAllBrands ? (
+              <div className="space-y-2">
+                <Input
+                  value={brandSearch}
+                  onChange={(event) => setBrandSearch(event.target.value)}
+                  placeholder="Search brands"
+                />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {filteredBrandOptions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No brands found.</p>
+                  ) : (
+                    filteredBrandOptions.map((brand) => (
+                      <label key={brand} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={selectedBrands.includes(brand)}
+                          onChange={() =>
+                            toggleSelection(brand, selectedBrands, setSelectedBrands)
+                          }
+                        />
+                        <span>{brand}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
         <div className="space-y-2">
           <Label>adArticleType</Label>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {articleTypeOptions.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No article types available.</p>
-            ) : (
-              articleTypeOptions.map((value) => (
-                <label key={value} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={selectedArticleTypes.includes(value)}
-                    onChange={() =>
-                      toggleSelection(value, selectedArticleTypes, setSelectedArticleTypes)
-                    }
-                  />
-                  <span>{value}</span>
-                </label>
-              ))
-            )}
-          </div>
+          {selectedBrands.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Select a brand to view article types.
+            </p>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {articleTypeOptions.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No article types available.</p>
+              ) : (
+                articleTypeOptions.map((value) => (
+                  <label key={value} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedArticleTypes.includes(value)}
+                      onChange={() =>
+                        toggleSelection(value, selectedArticleTypes, setSelectedArticleTypes)
+                      }
+                    />
+                    <span>{value}</span>
+                  </label>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
         <div className="space-y-2">

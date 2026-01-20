@@ -815,6 +815,10 @@ export default function CatalogueBuilderPage() {
     () => tiles.find((tile) => tile.id === selectedTileId) ?? null,
     [tiles, selectedTileId]
   )
+  const detectedBrands = useMemo(() => {
+    if (!selectedTile?.offer?.brand?.label) return []
+    return [selectedTile.offer.brand.label]
+  }, [selectedTile?.offer?.brand?.label])
   const manualPreviewUrl = useMemo(
     () => buildPreviewUrlFromState(draftLinkState, project?.region),
     [draftLinkState, project?.region]
@@ -2355,6 +2359,7 @@ export default function CatalogueBuilderPage() {
                           facetSelectedArticleTypes={draftFacetArticleTypes}
                           onFacetSelectedBrandsChange={setDraftFacetBrands}
                           onFacetSelectedArticleTypesChange={setDraftFacetArticleTypes}
+                          detectedBrands={detectedBrands}
                           liveLinkUrl={draftLiveCapturedUrl}
                           onLiveLinkChange={setDraftLiveCapturedUrl}
                           liveLinkEditable={extensionStatus !== "available"}

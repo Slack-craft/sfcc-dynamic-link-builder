@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { X } from "lucide-react"
 import { toast } from "sonner"
+import { FixedSizeGrid } from "react-window"
 import type { CsvRow } from "@/lib/catalogueDataset/parseCsv"
 import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
 import { getFacetValue } from "@/lib/catalogueDataset/facets"
@@ -387,23 +388,26 @@ export function FacetMatchesCard({
     () => matches.pluIds.filter((plu) => !excludedSet.has(plu)),
     [matches.pluIds, excludedSet]
   )
-  const displayRows = useMemo(() => {
+  const includedRows = useMemo(() => {
     if (matches.rows.length === 0) return []
-    const included: CsvRow[] = []
-    const excluded: CsvRow[] = []
-    matches.rows.forEach((row) => {
+    return matches.rows.filter((row) => {
       const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
-      if (!plu) return
-      if (excludedSet.has(plu)) {
-        excluded.push(row)
-      } else {
-        included.push(row)
-      }
+      if (!plu) return false
+      return !excludedSet.has(plu)
     })
-    return [...included, ...excluded]
   }, [matches.rows, excludedSet])
-
-  const previewRows = useMemo(() => displayRows.slice(0, 24), [displayRows])
+  const excludedRows = useMemo(() => {
+    if (matches.rows.length === 0) return []
+    return matches.rows.filter((row) => {
+      const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
+      if (!plu) return false
+      return excludedSet.has(plu)
+    })
+  }, [matches.rows, excludedSet])
+  const displayRows = useMemo(
+    () => [...includedRows, ...excludedRows],
+    [includedRows, excludedRows]
+  )
 
   function getProductImageUrl(plu: string) {
     return `https://staging.supercheapauto.com.au/dw/image/v2/BBRV_STG/on/demandware.static/-/Sites-srg-internal-master-catalog/default/dwe566580c/images/${plu}/SCA_${plu}_hi-res.jpg?sw=558&sh=558&sm=fit&q=60`
@@ -435,6 +439,97 @@ export function FacetMatchesCard({
     const rounded = roundDownToNearest5(numeric)
     return rounded >= 5 ? rounded : undefined
   }
+
+  const renderCard = useCallback(
+    (row: CsvRow) => {
+      const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
+      if (!plu) return null
+      const imageUrl = getProductImageUrl(plu)
+      const productName = getRowDisplayName(row)
+      const percent = resolvePercentOff(row)
+      const hasOfferPercent =
+        Number.isFinite(detectedOfferPercent ?? NaN) && (detectedOfferPercent ?? 0) > 0
+      const isMismatch =
+        hasOfferPercent && percent !== undefined && percent !== detectedOfferPercent
+      const isMatch =
+        hasOfferPercent && percent !== undefined && percent === detectedOfferPercent
+      const articleType = getFacetValue(row, "adArticleType", scope)
+      const isExcluded = excludedSet.has(plu)
+
+      return (
+        <Card
+          className={`h-full overflow-hidden rounded-xl border shadow-sm transition hover:border-muted-foreground/40 hover:shadow-md ${
+            isExcluded ? "opacity-60" : ""
+          }`}
+        >
+          <div className="relative aspect-square bg-muted/30">
+            <img
+              src={imageUrl}
+              alt={plu}
+              className="h-full w-full object-contain p-3"
+              onError={(event) => {
+                event.currentTarget.src =
+                  "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+              }}
+            />
+            {percent !== undefined && percent > 0 ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge
+                    className="absolute left-2 top-2"
+                    variant={isMismatch ? "destructive" : "default"}
+                    style={isMatch ? { backgroundColor: "#16a34a", color: "#fff" } : undefined}
+                  >
+                    {percent}% OFF
+                  </Badge>
+                </TooltipTrigger>
+                {isMismatch ? (
+                  <TooltipContent>
+                    Mismatch: Tile shows {detectedOfferPercent}%.
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Exclude product"
+                  className="absolute right-2 top-2 rounded-full bg-background/80 p-1 text-muted-foreground shadow hover:text-foreground"
+                  onClick={() => {
+                    if (isExcluded) {
+                      setExcludedPluIds(excludedPluIds.filter((id) => id !== plu))
+                    } else {
+                      setExcludedPluIds([...excludedPluIds, plu])
+                    }
+                  }}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Exclude</TooltipContent>
+            </Tooltip>
+          </div>
+          <div className="space-y-1 p-3 text-xs">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {row.brand ?? "—"}
+            </div>
+            <div className="line-clamp-2 text-sm font-medium leading-snug">
+              {productName || "Unnamed product"}
+            </div>
+            {isExcluded ? (
+              <div className="text-xs text-muted-foreground">Excluded from Selection</div>
+            ) : null}
+            <div className="line-clamp-1 text-xs text-muted-foreground">
+              PLU: {plu}
+              {articleType ? ` • ${articleType}` : ""}
+            </div>
+          </div>
+        </Card>
+      )
+    },
+    [detectedOfferPercent, excludedPluIds, excludedSet, scope, setExcludedPluIds]
+  )
 
   return (
     <Card className="lg:col-span-2 flex flex-col">
@@ -491,7 +586,7 @@ export function FacetMatchesCard({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-2">
+      <CardContent className="space-y-2 px-0">
         {selectedBrands.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             Select a brand to preview dataset matches.
@@ -500,100 +595,94 @@ export function FacetMatchesCard({
           <p className="text-xs text-muted-foreground">No matching products.</p>
         ) : (
           <TooltipProvider>
-            <div className="grid gap-4 grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-              {previewRows.map((row) => {
-                const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
-                if (!plu) return null
-                const imageUrl = getProductImageUrl(plu)
-                const productName = getRowDisplayName(row)
-                const percent = resolvePercentOff(row)
-                const hasOfferPercent =
-                  Number.isFinite(detectedOfferPercent ?? NaN) && (detectedOfferPercent ?? 0) > 0
-                const isMismatch =
-                  hasOfferPercent && percent !== undefined && percent !== detectedOfferPercent
-                const isMatch =
-                  hasOfferPercent && percent !== undefined && percent === detectedOfferPercent
-                const articleType = getFacetValue(row, "adArticleType", scope)
-                const isExcluded = excludedSet.has(plu)
-                return (
-                  <Card
-                    key={plu}
-                    className={`overflow-hidden rounded-xl border shadow-sm transition hover:border-muted-foreground/40 hover:shadow-md ${
-                      isExcluded ? "opacity-60" : ""
-                    }`}
-                  >
-                    <div className="relative aspect-square bg-muted/30">
-                      <img
-                        src={imageUrl}
-                        alt={plu}
-                        className="h-full w-full object-contain p-3"
-                        onError={(event) => {
-                          event.currentTarget.src =
-                            "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-                        }}
-                      />
-                      {percent !== undefined && percent > 0 ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge
-                              className="absolute left-2 top-2"
-                              variant={isMismatch ? "destructive" : "default"}
-                              style={isMatch ? { backgroundColor: "#16a34a", color: "#fff" } : undefined}
-                            >
-                              {percent}% OFF
-                            </Badge>
-                          </TooltipTrigger>
-                          {isMismatch ? (
-                            <TooltipContent>
-                              Mismatch: Tile shows {detectedOfferPercent}%.
-                            </TooltipContent>
-                          ) : null}
-                        </Tooltip>
-                      ) : null}
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            aria-label="Exclude product"
-                            className="absolute right-2 top-2 rounded-full bg-background/80 p-1 text-muted-foreground shadow hover:text-foreground"
-                            onClick={() => {
-                              if (isExcluded) {
-                                setExcludedPluIds(excludedPluIds.filter((id) => id !== plu))
-                              } else {
-                                setExcludedPluIds([...excludedPluIds, plu])
-                              }
-                            }}
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>Exclude</TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <div className="space-y-1 p-3 text-xs">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        {row.brand ?? "—"}
-                      </div>
-                      <div className="line-clamp-2 text-sm font-medium leading-snug">
-                        {productName || "Unnamed product"}
-                      </div>
-                      {isExcluded ? (
-                        <div className="text-xs text-muted-foreground">
-                          Excluded from Selection
-                        </div>
-                      ) : null}
-                      <div className="line-clamp-1 text-xs text-muted-foreground">
-                        PLU: {plu}
-                        {articleType ? ` • ${articleType}` : ""}
-                      </div>
-                    </div>
-                  </Card>
-                )
-              })}
+            <div className="space-y-4">
+              <VirtualizedProductGrid
+                items={displayRows}
+                renderCard={renderCard}
+                heightClassName="h-[70vh] overflow-hidden"
+              />
             </div>
           </TooltipProvider>
         )}
       </CardContent>
     </Card>
+  )
+}
+
+type VirtualizedProductGridProps = {
+  items: CsvRow[]
+  renderCard: (row: CsvRow) => React.ReactNode
+  minColumnWidth?: number
+  rowHeight?: number
+  heightClassName?: string
+}
+
+function VirtualizedProductGrid({
+  items,
+  renderCard,
+  minColumnWidth = 220,
+  rowHeight = 340,
+  heightClassName = "h-[60vh] overflow-hidden",
+}: VirtualizedProductGridProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+
+  useEffect(() => {
+    const node = containerRef.current
+    if (!node) return
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      setSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      })
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+
+  const columnCount = useMemo(() => {
+    if (size.width === 0) return 1
+    return Math.max(1, Math.floor(size.width / minColumnWidth))
+  }, [minColumnWidth, size.width])
+
+  const columnWidth = useMemo(() => {
+    if (size.width === 0) return minColumnWidth
+    return Math.floor(size.width / columnCount)
+  }, [columnCount, minColumnWidth, size.width])
+
+  const rowCount = useMemo(() => {
+    if (items.length === 0) return 0
+    return Math.ceil(items.length / columnCount)
+  }, [columnCount, items.length])
+
+  return (
+    <div ref={containerRef} className={`${heightClassName} w-full overflow-x-hidden`}>
+      {size.width > 0 && size.height > 0 ? (
+        <FixedSizeGrid
+          columnCount={columnCount}
+          columnWidth={columnWidth}
+          height={size.height}
+          rowCount={rowCount}
+          rowHeight={rowHeight}
+          width={size.width}
+          className="overflow-x-hidden"
+          style={{ overflowX: "hidden" }}
+        >
+          {({ columnIndex, rowIndex, style }) => {
+            const index = rowIndex * columnCount + columnIndex
+            if (index >= items.length) return null
+          return (
+            <div
+              style={{ ...style, boxSizing: "border-box", padding: "8px" }}
+            >
+              {renderCard(items[index])}
+            </div>
+          )
+        }}
+      </FixedSizeGrid>
+    ) : null}
+  </div>
   )
 }

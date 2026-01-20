@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { X } from "lucide-react"
+import { toast } from "sonner"
 import type { CsvRow } from "@/lib/catalogueDataset/parseCsv"
 import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
 import { getFacetValue } from "@/lib/catalogueDataset/facets"
@@ -338,6 +339,7 @@ type FacetMatchesCardProps = {
   excludedPluIds?: string[]
   onExcludedPluIdsChange?: (next: string[]) => void
   onConvertToPlu?: (pluIds: string[]) => void
+  detectedOfferPercent?: number
 }
 
 export function FacetMatchesCard({
@@ -348,6 +350,7 @@ export function FacetMatchesCard({
   excludedPluIds = [],
   onExcludedPluIdsChange,
   onConvertToPlu,
+  detectedOfferPercent,
 }: FacetMatchesCardProps) {
   const setExcludedPluIds = onExcludedPluIdsChange ?? (() => {})
 
@@ -384,20 +387,41 @@ export function FacetMatchesCard({
     () => matches.pluIds.filter((plu) => !excludedSet.has(plu)),
     [matches.pluIds, excludedSet]
   )
-  const previewRows = useMemo(() => matches.rows.slice(0, 24), [matches.rows])
+  const displayRows = useMemo(() => {
+    if (matches.rows.length === 0) return []
+    const included: CsvRow[] = []
+    const excluded: CsvRow[] = []
+    matches.rows.forEach((row) => {
+      const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
+      if (!plu) return
+      if (excludedSet.has(plu)) {
+        excluded.push(row)
+      } else {
+        included.push(row)
+      }
+    })
+    return [...included, ...excluded]
+  }, [matches.rows, excludedSet])
+
+  const previewRows = useMemo(() => displayRows.slice(0, 24), [displayRows])
 
   function getProductImageUrl(plu: string) {
     return `https://staging.supercheapauto.com.au/dw/image/v2/BBRV_STG/on/demandware.static/-/Sites-srg-internal-master-catalog/default/dwe566580c/images/${plu}/SCA_${plu}_hi-res.jpg?sw=558&sh=558&sm=fit&q=60`
   }
 
-  function resolveProductName(row: CsvRow) {
-    return (
-      row["name__en_AU"] ??
-      row["name__default"] ??
-      row.name ??
-      row["Name"] ??
-      ""
-    )
+  function getRowDisplayName(row: CsvRow) {
+    const nameDefault = row["name__default"]?.trim()
+    if (nameDefault) return nameDefault
+    const nameAu = row["name__en_AU"]?.trim()
+    if (nameAu) return nameAu
+    const name = row["name"]?.trim()
+    if (name) return name
+    return ""
+  }
+
+  function roundDownToNearest5(value: number) {
+    if (!Number.isFinite(value) || value <= 0) return 0
+    return Math.floor(value / 5) * 5
   }
 
   function resolvePercentOff(row: CsvRow) {
@@ -408,7 +432,8 @@ export function FacetMatchesCard({
       row["Pr Save % "]
     const numeric = candidate ? Number(String(candidate).replace(/[^\d.]/g, "")) : NaN
     if (!Number.isFinite(numeric)) return undefined
-    return Math.round(numeric)
+    const rounded = roundDownToNearest5(numeric)
+    return rounded >= 5 ? rounded : undefined
   }
 
   return (
@@ -430,6 +455,39 @@ export function FacetMatchesCard({
             >
               Convert to PLU Link
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!detectedOfferPercent || detectedOfferPercent <= 0}
+              onClick={() => {
+                if (!detectedOfferPercent || detectedOfferPercent <= 0) return
+                const nextExcluded = new Set(excludedPluIds)
+                let added = 0
+                matches.rows.forEach((row) => {
+                  const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
+                  if (!plu) return
+                  const displayPercent = resolvePercentOff(row)
+                  if (!displayPercent || displayPercent <= 0) return
+                  if (displayPercent !== detectedOfferPercent) {
+                    if (!nextExcluded.has(plu)) {
+                      nextExcluded.add(plu)
+                      added += 1
+                    }
+                  }
+                })
+                setExcludedPluIds(Array.from(nextExcluded))
+                if (added > 0) {
+                  toast.success(
+                    `Excluded ${added} items that didn’t match ${detectedOfferPercent}%.`
+                  )
+                } else {
+                  toast.info("No mismatching items found.")
+                }
+              }}
+            >
+              Exclude % mismatches
+            </Button>
           </div>
         </div>
       </CardHeader>
@@ -442,13 +500,19 @@ export function FacetMatchesCard({
           <p className="text-xs text-muted-foreground">No matching products.</p>
         ) : (
           <TooltipProvider>
-            <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            <div className="grid gap-4 grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
               {previewRows.map((row) => {
                 const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
                 if (!plu) return null
                 const imageUrl = getProductImageUrl(plu)
-                const productName = resolveProductName(row)
+                const productName = getRowDisplayName(row)
                 const percent = resolvePercentOff(row)
+                const hasOfferPercent =
+                  Number.isFinite(detectedOfferPercent ?? NaN) && (detectedOfferPercent ?? 0) > 0
+                const isMismatch =
+                  hasOfferPercent && percent !== undefined && percent !== detectedOfferPercent
+                const isMatch =
+                  hasOfferPercent && percent !== undefined && percent === detectedOfferPercent
                 const articleType = getFacetValue(row, "adArticleType", scope)
                 const isExcluded = excludedSet.has(plu)
                 return (
@@ -469,9 +533,22 @@ export function FacetMatchesCard({
                         }}
                       />
                       {percent !== undefined && percent > 0 ? (
-                        <Badge className="absolute left-2 top-2 bg-foreground text-background">
-                          {percent}% OFF
-                        </Badge>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge
+                              className="absolute left-2 top-2"
+                              variant={isMismatch ? "destructive" : "default"}
+                              style={isMatch ? { backgroundColor: "#16a34a", color: "#fff" } : undefined}
+                            >
+                              {percent}% OFF
+                            </Badge>
+                          </TooltipTrigger>
+                          {isMismatch ? (
+                            <TooltipContent>
+                              Mismatch: Tile shows {detectedOfferPercent}%.
+                            </TooltipContent>
+                          ) : null}
+                        </Tooltip>
                       ) : null}
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -500,6 +577,11 @@ export function FacetMatchesCard({
                       <div className="line-clamp-2 text-sm font-medium leading-snug">
                         {productName || "Unnamed product"}
                       </div>
+                      {isExcluded ? (
+                        <div className="text-xs text-muted-foreground">
+                          Excluded from Selection
+                        </div>
+                      ) : null}
                       <div className="line-clamp-1 text-xs text-muted-foreground">
                         PLU: {plu}
                         {articleType ? ` • ${articleType}` : ""}

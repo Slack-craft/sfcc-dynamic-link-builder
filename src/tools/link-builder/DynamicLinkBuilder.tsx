@@ -306,6 +306,7 @@ type DynamicLinkBuilderProps = {
   facetExcludedPluIds?: string[]
   onFacetExcludedPluIdsChange?: (next: string[]) => void
   detectedBrands?: string[]
+  detectedOfferPercent?: number
   liveLinkUrl?: string
   onLiveLinkChange?: (value: string) => void
   liveLinkEditable?: boolean
@@ -342,6 +343,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       facetExcludedPluIds,
       onFacetExcludedPluIdsChange,
       detectedBrands,
+      detectedOfferPercent,
       liveLinkUrl,
       onLiveLinkChange,
       liveLinkEditable = false,
@@ -1188,6 +1190,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           excludedPluIds={facetExcludedPluIds}
           onExcludedPluIdsChange={onFacetExcludedPluIdsChange}
           onConvertToPlu={convertToPluLink}
+          detectedOfferPercent={detectedOfferPercent}
         />
 
         {/* Output */}

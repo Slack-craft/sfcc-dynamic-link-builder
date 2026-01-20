@@ -2384,6 +2384,7 @@ export default function CatalogueBuilderPage() {
                           facetExcludedPluIds={draftFacetExcludedPluIds}
                           onFacetExcludedPluIdsChange={setDraftFacetExcludedPluIds}
                           detectedBrands={detectedBrands}
+                          detectedOfferPercent={selectedTile.offer?.percentOff?.value}
                           liveLinkUrl={draftLiveCapturedUrl}
                           onLiveLinkChange={setDraftLiveCapturedUrl}
                           liveLinkEditable={extensionStatus !== "available"}

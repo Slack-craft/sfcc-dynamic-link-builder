@@ -12,7 +12,7 @@ import type { LinkBuilderOption, LinkBuilderState } from "@/tools/link-builder/l
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { toast } from "sonner"
-import { FacetBuilderCard, FacetMatchesCard, type FacetDataset } from "@/components/facet-builder/facet-builder-card"
+import { FacetMatchesCard, type FacetDataset } from "@/components/facet-builder/facet-builder-card"
 
 const CATEGORY_OPTIONS: LinkBuilderOption[] = [
   { label: "Catalog", value: "catalogue-onsale" },
@@ -1160,7 +1160,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           </CardContent>
         </Card>
 
-        <FacetBuilderCard
+        <FacetMatchesCard
           scope={scope}
           dataset={dataset}
           onOpenDatasetPanel={onOpenDatasetPanel}
@@ -1168,7 +1168,11 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           selectedArticleTypes={facetSelectedArticleTypes}
           onSelectedBrandsChange={onFacetSelectedBrandsChange}
           onSelectedArticleTypesChange={onFacetSelectedArticleTypesChange}
+          excludedPluIds={facetExcludedPluIds}
+          onExcludedPluIdsChange={onFacetExcludedPluIdsChange}
+          onConvertToPlu={convertToPluLink}
           detectedBrands={detectedBrands}
+          detectedOfferPercent={detectedOfferPercent}
           onApplyExtension={(query) => {
             const nextExtension = query || ""
             setExtension(nextExtension)
@@ -1181,16 +1185,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
               captureMode,
             })
           }}
-        />
-        <FacetMatchesCard
-          scope={scope}
-          dataset={dataset}
-          selectedBrands={facetSelectedBrands}
-          selectedArticleTypes={facetSelectedArticleTypes}
-          excludedPluIds={facetExcludedPluIds}
-          onExcludedPluIdsChange={onFacetExcludedPluIdsChange}
-          onConvertToPlu={convertToPluLink}
-          detectedOfferPercent={detectedOfferPercent}
         />
 
         {/* Output */}

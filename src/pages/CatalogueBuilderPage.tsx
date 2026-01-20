@@ -1178,7 +1178,7 @@ export default function CatalogueBuilderPage() {
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement("a")
     anchor.href = url
-    anchor.download = record.name || project.dataset.filename || "dataset.csv"
+    anchor.download = record.filename || project.dataset.filename || "dataset.csv"
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()

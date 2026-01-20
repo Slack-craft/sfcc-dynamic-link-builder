@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { FixedSizeGrid } from "react-window"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { X } from "lucide-react"
+import { Check, ChevronDown, X } from "lucide-react"
 import { toast } from "sonner"
-import { FixedSizeGrid } from "react-window"
 import type { CsvRow } from "@/lib/catalogueDataset/parseCsv"
 import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
 import { getFacetValue } from "@/lib/catalogueDataset/facets"
@@ -20,16 +29,30 @@ export type FacetDataset = {
   version: number
 }
 
-type FacetBuilderCardProps = {
+type FacetMatchesCardProps = {
   scope?: "AU" | "NZ"
-  onApplyExtension: (query: string) => void
   dataset: FacetDataset | null
   onOpenDatasetPanel?: () => void
   selectedBrands?: string[]
   selectedArticleTypes?: string[]
   onSelectedBrandsChange?: (next: string[]) => void
   onSelectedArticleTypesChange?: (next: string[]) => void
+  excludedPluIds?: string[]
+  onExcludedPluIdsChange?: (next: string[]) => void
+  onConvertToPlu?: (pluIds: string[]) => void
+  detectedOfferPercent?: number
   detectedBrands?: string[]
+  onApplyExtension: (query: string) => void
+}
+
+type MultiSelectProps = {
+  label: string
+  options: string[]
+  selected: string[]
+  onChange: (next: string[]) => void
+  disabled?: boolean
+  placeholder?: string
+  searchPlaceholder?: string
 }
 
 function buildQueryFromSelections(selected: Record<string, string[]>) {
@@ -43,22 +66,128 @@ function buildQueryFromSelections(selected: Record<string, string[]>) {
   return `?${params.join("&")}&sz=36`
 }
 
-export function FacetBuilderCard({
+function normalizeBrand(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function MultiSelect({
+  label,
+  options,
+  selected,
+  onChange,
+  disabled,
+  placeholder = "Select",
+  searchPlaceholder = "Search",
+}: MultiSelectProps) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
+
+  const filteredOptions = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return options
+    return options.filter((option) => option.toLowerCase().includes(q))
+  }, [options, query])
+
+  const toggle = useCallback(
+    (value: string) => {
+      if (selected.includes(value)) {
+        onChange(selected.filter((item) => item !== value))
+      } else {
+        onChange([...selected, value])
+      }
+    },
+    [onChange, selected]
+  )
+
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 w-full justify-between text-xs"
+            disabled={disabled}
+          >
+            <span className="truncate">
+              {selected.length > 0 ? `${selected.length} selected` : placeholder}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72 p-0" align="start">
+          <Command>
+            <CommandInput
+              placeholder={searchPlaceholder}
+              value={query}
+              onValueChange={setQuery}
+            />
+            <CommandList>
+              <CommandEmpty>No options found.</CommandEmpty>
+              <CommandGroup>
+                {filteredOptions.map((option) => (
+                  <CommandItem
+                    key={option}
+                    value={option}
+                    onSelect={() => toggle(option)}
+                  >
+                    <Check
+                      className={`mr-2 h-4 w-4 ${
+                        selected.includes(option) ? "opacity-100" : "opacity-0"
+                      }`}
+                    />
+                    {option}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+      {selected.length > 0 ? (
+        <div className="flex flex-wrap gap-1">
+          {selected.map((value) => (
+            <Badge key={value} variant="secondary" className="gap-1 text-xs">
+              {value}
+              <button
+                type="button"
+                onClick={() => toggle(value)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export function FacetMatchesCard({
   scope = "AU",
-  onApplyExtension,
   dataset,
   onOpenDatasetPanel,
   selectedBrands = [],
   selectedArticleTypes = [],
   onSelectedBrandsChange,
   onSelectedArticleTypesChange,
+  excludedPluIds = [],
+  onExcludedPluIdsChange,
+  onConvertToPlu,
+  detectedOfferPercent,
   detectedBrands = [],
-}: FacetBuilderCardProps) {
+  onApplyExtension,
+}: FacetMatchesCardProps) {
   const setSelectedBrands = onSelectedBrandsChange ?? (() => {})
   const setSelectedArticleTypes = onSelectedArticleTypesChange ?? (() => {})
-  const [showAllBrands, setShowAllBrands] = useState(false)
-  const [brandSearch, setBrandSearch] = useState("")
-  const [articleTypeSearch, setArticleTypeSearch] = useState("")
+  const setExcludedPluIds = onExcludedPluIdsChange ?? (() => {})
   const appliedDetectedRef = useRef<string | null>(null)
 
   const brandOptions = useMemo(() => {
@@ -70,58 +199,6 @@ export function FacetBuilderCard({
     })
     return Array.from(values).sort((a, b) => a.localeCompare(b))
   }, [dataset])
-
-  const articleTypeOptions = useMemo(() => {
-    if (!dataset) return []
-    if (selectedBrands.length === 0) return []
-    const values = new Set<string>()
-    dataset.rowsRef.current.forEach((row) => {
-      const brandValue = row.brand?.trim()
-      if (selectedBrands.length > 0 && !selectedBrands.includes(brandValue ?? "")) {
-        return
-      }
-      const facetValue = getFacetValue(row, "adArticleType", scope)
-      if (facetValue) values.add(facetValue)
-    })
-    return Array.from(values).sort((a, b) => a.localeCompare(b))
-  }, [dataset, selectedBrands, scope])
-
-  const filteredArticleTypeOptions = useMemo(() => {
-    const query = articleTypeSearch.trim().toLowerCase()
-    if (!query) return articleTypeOptions
-    return articleTypeOptions.filter((value) => value.toLowerCase().includes(query))
-  }, [articleTypeOptions, articleTypeSearch])
-
-  const queryPreview = useMemo(() => {
-    const selected: Record<string, string[]> = {}
-    if (selectedBrands.length > 0) {
-      selected.brand = selectedBrands
-    }
-    if (selectedArticleTypes.length > 0) {
-      selected.adArticleType = selectedArticleTypes
-    }
-    return buildQueryFromSelections(selected)
-  }, [selectedBrands, selectedArticleTypes])
-
-  function toggleSelection(
-    value: string,
-    selected: string[],
-    setSelected: (values: string[]) => void
-  ) {
-    if (selected.includes(value)) {
-      setSelected(selected.filter((item) => item !== value))
-    } else {
-      setSelected([...selected, value])
-    }
-  }
-
-  function normalizeBrand(value: string) {
-    return value
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-  }
 
   const matchedBrandValues = useMemo(() => {
     if (!dataset || detectedBrands.length === 0) return []
@@ -161,199 +238,31 @@ export function FacetBuilderCard({
     setSelectedBrands(matchedBrandValues)
   }, [dataset, matchedBrandValues, selectedBrands.length, setSelectedBrands])
 
-  const filteredBrandOptions = useMemo(() => {
-    const query = brandSearch.trim().toLowerCase()
-    if (!query) return brandOptions
-    return brandOptions.filter((brand) => brand.toLowerCase().includes(query))
-  }, [brandOptions, brandSearch])
+  const articleTypeOptions = useMemo(() => {
+    if (!dataset) return []
+    if (selectedBrands.length === 0) return []
+    const values = new Set<string>()
+    dataset.rowsRef.current.forEach((row) => {
+      const brandValue = row.brand?.trim()
+      if (selectedBrands.length > 0 && !selectedBrands.includes(brandValue ?? "")) {
+        return
+      }
+      const facetValue = getFacetValue(row, "adArticleType", scope)
+      if (facetValue) values.add(facetValue)
+    })
+    return Array.from(values).sort((a, b) => a.localeCompare(b))
+  }, [dataset, selectedBrands, scope])
 
-  return (
-    <Card className="lg:col-span-1 flex flex-col">
-      <CardHeader>
-        <CardTitle>Facet Builder (Dataset)</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {!dataset ? (
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-              No dataset loaded for this project.
-            </p>
-            {onOpenDatasetPanel ? (
-              <Button type="button" variant="outline" size="sm" onClick={onOpenDatasetPanel}>
-                Open Project Dataset
-              </Button>
-            ) : null}
-          </div>
-        ) : (
-          <div className="space-y-2 text-xs text-muted-foreground">
-            <div>{dataset.rowCount} rows loaded, {dataset.headers.length} columns</div>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <Label>Brand</Label>
-          <div className="space-y-2">
-            {detectedBrands.length > 0 ? (
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">Detected Brands</p>
-                <div className="flex flex-wrap gap-2 text-xs">
-                  {detectedBrands.map((brand) => (
-                    <span
-                      key={brand}
-                      className="rounded-full border border-muted-foreground/40 px-2 py-0.5 text-muted-foreground"
-                    >
-                      {brand}
-                    </span>
-                  ))}
-                </div>
-                {matchedBrandValues.length > 0 ? (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {matchedBrandValues.map((brand) => (
-                      <label key={brand} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={selectedBrands.includes(brand)}
-                          onChange={() =>
-                            toggleSelection(brand, selectedBrands, setSelectedBrands)
-                          }
-                        />
-                        <span>{brand}</span>
-                      </label>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    No brand match found in dataset.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                No brand detected for this tile yet.
-              </p>
-            )}
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setShowAllBrands((prev) => !prev)}
-              disabled={brandOptions.length === 0}
-            >
-              {showAllBrands ? "Hide brands" : "Change brands"}
-            </Button>
-
-            {showAllBrands ? (
-              <div className="space-y-2">
-                <Input
-                  value={brandSearch}
-                  onChange={(event) => setBrandSearch(event.target.value)}
-                  placeholder="Search brands"
-                />
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {filteredBrandOptions.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No brands found.</p>
-                  ) : (
-                    filteredBrandOptions.map((brand) => (
-                      <label key={brand} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={selectedBrands.includes(brand)}
-                          onChange={() =>
-                            toggleSelection(brand, selectedBrands, setSelectedBrands)
-                          }
-                        />
-                        <span>{brand}</span>
-                      </label>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label>adArticleType</Label>
-          {selectedBrands.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              Select a brand to view article types.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              <Input
-                value={articleTypeSearch}
-                onChange={(event) => setArticleTypeSearch(event.target.value)}
-                placeholder="Search article types"
-              />
-              <div className="grid gap-2 sm:grid-cols-2">
-                {filteredArticleTypeOptions.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No article types available.</p>
-                ) : (
-                  filteredArticleTypeOptions.map((value) => (
-                    <label key={value} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={selectedArticleTypes.includes(value)}
-                        onChange={() =>
-                          toggleSelection(value, selectedArticleTypes, setSelectedArticleTypes)
-                        }
-                      />
-                      <span>{value}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label>Generated query</Label>
-          <Input readOnly value={queryPreview} placeholder="No facets selected." />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              onClick={() => onApplyExtension(queryPreview)}
-              disabled={!queryPreview}
-            >
-              Apply to Extension
-            </Button>
-          </div>
-        </div>
-
-        {dataset?.columnMeta ? (
-          <p className="text-xs text-muted-foreground">
-            Facet columns detected: {dataset.columnMeta.facetKeys.length}
-          </p>
-        ) : null}
-      </CardContent>
-    </Card>
-  )
-}
-
-type FacetMatchesCardProps = {
-  scope?: "AU" | "NZ"
-  dataset: FacetDataset | null
-  selectedBrands?: string[]
-  selectedArticleTypes?: string[]
-  excludedPluIds?: string[]
-  onExcludedPluIdsChange?: (next: string[]) => void
-  onConvertToPlu?: (pluIds: string[]) => void
-  detectedOfferPercent?: number
-}
-
-export function FacetMatchesCard({
-  scope = "AU",
-  dataset,
-  selectedBrands = [],
-  selectedArticleTypes = [],
-  excludedPluIds = [],
-  onExcludedPluIdsChange,
-  onConvertToPlu,
-  detectedOfferPercent,
-}: FacetMatchesCardProps) {
-  const setExcludedPluIds = onExcludedPluIdsChange ?? (() => {})
+  const queryPreview = useMemo(() => {
+    const selected: Record<string, string[]> = {}
+    if (selectedBrands.length > 0) {
+      selected.brand = selectedBrands
+    }
+    if (selectedArticleTypes.length > 0) {
+      selected.adArticleType = selectedArticleTypes
+    }
+    return buildQueryFromSelections(selected)
+  }, [selectedBrands, selectedArticleTypes])
 
   const matches = useMemo(() => {
     if (!dataset) {
@@ -404,10 +313,7 @@ export function FacetMatchesCard({
       return excludedSet.has(plu)
     })
   }, [matches.rows, excludedSet])
-  const displayRows = useMemo(
-    () => [...includedRows, ...excludedRows],
-    [includedRows, excludedRows]
-  )
+  const displayRows = useMemo(() => [...includedRows, ...excludedRows], [includedRows, excludedRows])
 
   function getProductImageUrl(plu: string) {
     return `https://staging.supercheapauto.com.au/dw/image/v2/BBRV_STG/on/demandware.static/-/Sites-srg-internal-master-catalog/default/dwe566580c/images/${plu}/SCA_${plu}_hi-res.jpg?sw=558&sh=558&sm=fit&q=60`
@@ -512,7 +418,7 @@ export function FacetMatchesCard({
           </div>
           <div className="space-y-1 p-3 text-xs">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {row.brand ?? "—"}
+              {row.brand ?? "-"}
             </div>
             <div className="line-clamp-2 text-sm font-medium leading-snug">
               {productName || "Unnamed product"}
@@ -522,7 +428,7 @@ export function FacetMatchesCard({
             ) : null}
             <div className="line-clamp-1 text-xs text-muted-foreground">
               PLU: {plu}
-              {articleType ? ` • ${articleType}` : ""}
+              {articleType ? ` - ${articleType}` : ""}
             </div>
           </div>
         </Card>
@@ -534,13 +440,33 @@ export function FacetMatchesCard({
   return (
     <Card className="lg:col-span-2 flex flex-col">
       <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>Matches Preview</CardTitle>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="space-y-1">
+            <CardTitle>Matches Preview</CardTitle>
+            <div className="text-xs text-muted-foreground">
               Matching products: {matches.count}
               {excludedPluIds.length > 0 ? ` (${excludedPluIds.length} excluded)` : ""}
-            </span>
+            </div>
+          </div>
+          <div className="flex min-w-0 flex-1 items-center">
+            <Input
+              value={queryPreview}
+              readOnly
+              className="h-8 min-w-0 flex-1 rounded-r-none text-xs"
+              placeholder="No facets selected."
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 rounded-l-none"
+              onClick={() => onApplyExtension(queryPreview)}
+              disabled={!queryPreview}
+            >
+              Apply
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <Button
               type="button"
               size="sm"
@@ -574,7 +500,7 @@ export function FacetMatchesCard({
                 setExcludedPluIds(Array.from(nextExcluded))
                 if (added > 0) {
                   toast.success(
-                    `Excluded ${added} items that didn’t match ${detectedOfferPercent}%.`
+                    `Excluded ${added} items that did not match ${detectedOfferPercent}%.`
                   )
                 } else {
                   toast.info("No mismatching items found.")
@@ -586,24 +512,91 @@ export function FacetMatchesCard({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-2 px-0">
-        {selectedBrands.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            Select a brand to preview dataset matches.
-          </p>
-        ) : matches.count === 0 ? (
-          <p className="text-xs text-muted-foreground">No matching products.</p>
-        ) : (
-          <TooltipProvider>
-            <div className="space-y-4">
-              <VirtualizedProductGrid
-                items={displayRows}
-                renderCard={renderCard}
-                heightClassName="h-[70vh] overflow-hidden"
-              />
-            </div>
-          </TooltipProvider>
-        )}
+      <CardContent className="space-y-3 px-0">
+        <div className="px-6">
+          <div className="grid gap-3">
+            <Card className="w-full">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Facet Filters</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!dataset ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      No dataset loaded for this project.
+                    </p>
+                    {onOpenDatasetPanel ? (
+                      <Button type="button" variant="outline" size="sm" onClick={onOpenDatasetPanel}>
+                        Open Project Dataset
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-start gap-4">
+                    <div className="space-y-2 min-w-[220px] flex-1">
+                      <MultiSelect
+                        label="Brand"
+                        options={brandOptions}
+                        selected={selectedBrands}
+                        onChange={setSelectedBrands}
+                        placeholder="Select brands"
+                        searchPlaceholder="Search brands"
+                      />
+                      {detectedBrands.length > 0 ? (
+                        <div className="text-xs text-muted-foreground">
+                          Detected: {detectedBrands.join(", ")}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">
+                          No brand detected for this tile yet.
+                        </div>
+                      )}
+                    </div>
+                    <div className="space-y-2 min-w-[220px] flex-1">
+                      <MultiSelect
+                        label="Article Type"
+                        options={articleTypeOptions}
+                        selected={selectedArticleTypes}
+                        onChange={setSelectedArticleTypes}
+                        disabled={selectedBrands.length === 0}
+                        placeholder={
+                          selectedBrands.length === 0
+                            ? "Select brand first"
+                            : "Select article types"
+                        }
+                        searchPlaceholder="Search types"
+                      />
+                    </div>
+                  </div>
+                )}
+                {dataset?.columnMeta ? (
+                  <p className="text-xs text-muted-foreground">
+                    Facet columns detected: {dataset.columnMeta.facetKeys.length}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+        {dataset ? (
+          selectedBrands.length === 0 ? (
+            <p className="px-6 text-xs text-muted-foreground">
+              Select a brand to preview dataset matches.
+            </p>
+          ) : matches.count === 0 ? (
+            <p className="px-6 text-xs text-muted-foreground">No matching products.</p>
+          ) : (
+            <TooltipProvider>
+              <div className="space-y-4">
+                <VirtualizedProductGrid
+                  items={displayRows}
+                  renderCard={renderCard}
+                  heightClassName="h-[70vh] overflow-hidden"
+                />
+              </div>
+            </TooltipProvider>
+          )
+        ) : null}
       </CardContent>
     </Card>
   )
@@ -673,16 +666,14 @@ function VirtualizedProductGrid({
           {({ columnIndex, rowIndex, style }) => {
             const index = rowIndex * columnCount + columnIndex
             if (index >= items.length) return null
-          return (
-            <div
-              style={{ ...style, boxSizing: "border-box", padding: "8px" }}
-            >
-              {renderCard(items[index])}
-            </div>
-          )
-        }}
-      </FixedSizeGrid>
-    ) : null}
-  </div>
+            return (
+              <div style={{ ...style, boxSizing: "border-box", padding: "8px" }}>
+                {renderCard(items[index])}
+              </div>
+            )
+          }}
+        </FixedSizeGrid>
+      ) : null}
+    </div>
   )
 }

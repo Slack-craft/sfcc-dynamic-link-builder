@@ -12,7 +12,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Info } from "lucide-react"
+import { FileText, Info, Trash2, Upload } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -32,6 +32,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { toast } from "sonner"
 import DynamicLinkBuilder, { type DynamicLinkBuilderHandle } from "@/tools/link-builder/DynamicLinkBuilder"
 import { BRAND_OPTIONS } from "@/data/brands"
@@ -497,6 +504,9 @@ export default function CatalogueBuilderPage() {
   const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
   const [datasetMeta, setDatasetMeta] = useState<DatasetCache | null>(null)
   const datasetRowsRef = useRef<CsvRow[]>([])
+  const [datasetUploadOpen, setDatasetUploadOpen] = useState(false)
+  const [datasetDetailsOpen, setDatasetDetailsOpen] = useState(false)
+  const [datasetClearOpen, setDatasetClearOpen] = useState(false)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
   const [extensionStatus, setExtensionStatus] = useState<
     "unknown" | "available" | "unavailable"
@@ -1154,6 +1164,25 @@ export default function CatalogueBuilderPage() {
       updatedAt: new Date().toISOString(),
     }
     upsertProject(updated)
+  }
+
+  async function handleDownloadDataset() {
+    if (!project?.dataset) return
+    const datasetKey = getDatasetKey(project.id, project.dataset.id)
+    const record = await getProjectDataset(datasetKey)
+    if (!record) {
+      toast.error("Dataset file not found in storage.")
+      return
+    }
+    const blob = new Blob([record.csvText], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = record.name || project.dataset.filename || "dataset.csv"
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
   }
 
   function handleUploadChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -2032,40 +2061,6 @@ export default function CatalogueBuilderPage() {
         {projectBar}
       </div>
       <Separator />
-      {project ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Project Dataset</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <Input
-                ref={datasetInputRef}
-                type="file"
-                accept=".csv"
-                onChange={handleDatasetUpload}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleClearDataset}
-                disabled={!project.dataset}
-              >
-                Clear dataset
-              </Button>
-            </div>
-            {project.dataset ? (
-              <div className="text-xs text-muted-foreground">
-                {project.dataset.filename} - {project.dataset.rowCount} rows
-              </div>
-            ) : (
-              <div className="text-xs text-muted-foreground">
-                No dataset uploaded for this project.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {project.stage === "setup" ? (
@@ -2104,6 +2099,37 @@ export default function CatalogueBuilderPage() {
             <Button type="button" variant="outline" onClick={confirmClearAll}>
               Clear All Tiles
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline">
+                  Project Dataset
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => setDatasetUploadOpen(true)}
+                >
+                  <Upload className="mr-2 h-4 w-4" />
+                  {project.dataset ? "Upload/Replace Dataset" : "Upload Dataset"}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setDatasetDetailsOpen(true)}
+                  disabled={!project.dataset}
+                >
+                  <FileText className="mr-2 h-4 w-4" />
+                  View Dataset Details
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setDatasetClearOpen(true)}
+                  disabled={!project.dataset}
+                  className="text-destructive"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Clear Dataset
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         ) : null}
       </div>
@@ -2376,7 +2402,7 @@ export default function CatalogueBuilderPage() {
                           onOutputChange={setDraftLinkOutput}
                           scope={project?.region ?? "AU"}
                           dataset={datasetMeta}
-                          onOpenDatasetPanel={() => datasetInputRef.current?.click()}
+                          onOpenDatasetPanel={() => setDatasetUploadOpen(true)}
                           facetSelectedBrands={draftFacetBrands}
                           facetSelectedArticleTypes={draftFacetArticleTypes}
                           onFacetSelectedBrandsChange={setDraftFacetBrands}
@@ -2598,6 +2624,83 @@ export default function CatalogueBuilderPage() {
         </CardContent>
       </Card>
       ) : null}
+      <Dialog open={datasetUploadOpen} onOpenChange={setDatasetUploadOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upload Dataset</DialogTitle>
+            <DialogDescription>
+              Upload a CSV dataset for this project.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              ref={datasetInputRef}
+              type="file"
+              accept=".csv"
+              onChange={(event) => {
+                void handleDatasetUpload(event)
+                setDatasetUploadOpen(false)
+              }}
+            />
+            {project?.dataset ? (
+              <div className="text-xs text-muted-foreground">
+                Current dataset: {project.dataset.filename} ({project.dataset.rowCount} rows)
+              </div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={datasetDetailsOpen} onOpenChange={setDatasetDetailsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Dataset Details</DialogTitle>
+          </DialogHeader>
+          {project?.dataset ? (
+            <div className="space-y-3 text-sm">
+              <div>
+                <span className="text-muted-foreground">Filename: </span>
+                {project.dataset.filename}
+              </div>
+              <div>
+                <span className="text-muted-foreground">Rows: </span>
+                {project.dataset.rowCount}
+              </div>
+              <div>
+                <span className="text-muted-foreground">Uploaded: </span>
+                {new Date(project.dataset.loadedAt).toLocaleString()}
+              </div>
+              <Button type="button" variant="outline" onClick={handleDownloadDataset}>
+                Download dataset
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No dataset uploaded.</p>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={datasetClearOpen} onOpenChange={setDatasetClearOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear dataset?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove the dataset from this project.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                void handleClearDataset()
+                setDatasetClearOpen(false)
+              }}
+            >
+              Clear Dataset
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

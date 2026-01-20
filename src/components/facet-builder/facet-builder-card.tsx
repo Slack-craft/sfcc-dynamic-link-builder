@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MutableRefObject,
+} from "react"
 import { FixedSizeGrid } from "react-window"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -16,7 +24,7 @@ import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Check, ChevronDown, X } from "lucide-react"
+import { Check, ChevronDown, List, X } from "lucide-react"
 import { toast } from "sonner"
 import type { CsvRow } from "@/lib/catalogueDataset/parseCsv"
 import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
@@ -61,6 +69,7 @@ type MultiSelectProps = {
   disabled?: boolean
   placeholder?: string
   searchPlaceholder?: string
+  previewMaxChars?: number
   labelClassName?: string
   triggerClassName?: string
 }
@@ -84,6 +93,126 @@ function normalizeBrand(value: string) {
     .trim()
 }
 
+function buildSelectionPreview(selected: string[], maxChars: number) {
+  if (selected.length === 0) return { text: "", overflowCount: 0 }
+  const items: string[] = []
+  let remaining = selected.length
+  let current = ""
+  for (const value of selected) {
+    const next = current ? `${current}, ${value}` : value
+    if (next.length > maxChars) break
+    items.push(value)
+    current = next
+    remaining -= 1
+  }
+  if (items.length === 0) {
+    return { text: selected[0] ?? "", overflowCount: selected.length - 1 }
+  }
+  return { text: current, overflowCount: remaining }
+}
+
+function useResponsiveSelectionPreview(params: {
+  items: string[]
+  placeholder: string
+  textRef: React.RefObject<HTMLSpanElement | null>
+  measureRef: React.RefObject<HTMLSpanElement | null>
+  suffixFormatter?: (hiddenCount: number) => string
+}) {
+  const { items, placeholder, textRef, measureRef, suffixFormatter } = params
+  const [displayText, setDisplayText] = useState(placeholder)
+  const loggedRef = useRef(0)
+
+  useEffect(() => {
+    function compute() {
+      const target = textRef.current
+      const measureNode = measureRef.current
+      if (!target || !measureNode) return
+      const width = target.clientWidth
+      if (!width) {
+        requestAnimationFrame(() => compute())
+        return
+      }
+      if (!width || items.length === 0) {
+        setDisplayText(placeholder)
+        return
+      }
+
+      const suffixFor = (count: number) =>
+        suffixFormatter ? suffixFormatter(count) : `... +${count}`
+
+      const measure = (value: string) => {
+        measureNode.textContent = value
+        return measureNode.getBoundingClientRect().width
+      }
+
+      const maxWidth = Math.max(0, width - 8)
+      const full = items.join(", ")
+      if (measure(full) <= maxWidth) {
+        setDisplayText(full)
+        if ((import.meta as any).env?.DEV && loggedRef.current < 2) {
+          console.log("[selection-preview]", { width: maxWidth, text: full })
+          loggedRef.current += 1
+        }
+        return
+      }
+
+      let best = ""
+      let bestRemaining = items.length
+      for (let i = 1; i <= items.length; i += 1) {
+        const remaining = items.length - i
+        const prefix = items.slice(0, i).join(", ")
+        const suffix = remaining > 0 ? ` ${suffixFor(remaining)}` : ""
+        if (measure(prefix + suffix) <= maxWidth) {
+          best = prefix + suffix
+          bestRemaining = remaining
+        } else {
+          break
+        }
+      }
+
+      if (best) {
+        setDisplayText(best)
+        if ((import.meta as any).env?.DEV && loggedRef.current < 2) {
+          console.log("[selection-preview]", { width: maxWidth, text: best })
+          loggedRef.current += 1
+        }
+        return
+      }
+
+      const remaining = items.length - 1
+      const suffix = ` ${suffixFor(remaining > 0 ? remaining : 1)}`
+      const first = items[0] ?? ""
+      let truncated = ""
+      for (let i = 1; i <= first.length; i += 1) {
+        const candidate = `${first.slice(0, i)}${suffix}`
+        if (measure(candidate) > maxWidth) {
+          truncated = `${first.slice(0, Math.max(1, i - 1))}${suffix}`
+          break
+        }
+      }
+      const finalText = truncated || `${first}${suffix}`
+      setDisplayText(finalText)
+      if ((import.meta as any).env?.DEV && loggedRef.current < 2) {
+        console.log("[selection-preview]", { width: maxWidth, text: finalText })
+        loggedRef.current += 1
+      }
+    }
+
+    const observer = new ResizeObserver(() => compute())
+    const target = textRef.current
+    if (target) observer.observe(target)
+    compute()
+
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(() => compute()).catch(() => undefined)
+    }
+
+    return () => observer.disconnect()
+  }, [items, measureRef, placeholder, suffixFormatter, textRef])
+
+  return { displayText }
+}
+
 function MultiSelect({
   label,
   options,
@@ -92,11 +221,15 @@ function MultiSelect({
   disabled,
   placeholder = "Select",
   searchPlaceholder = "Search",
+  previewMaxChars = 36,
   labelClassName,
   triggerClassName,
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
+  const textRef = useRef<HTMLSpanElement | null>(null)
+  const measureRef = useRef<HTMLSpanElement | null>(null)
+  const textClass = "min-w-0 flex-1 truncate text-left text-sm"
 
   const filteredOptions = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -115,6 +248,19 @@ function MultiSelect({
     [onChange, selected]
   )
 
+  const fallbackPreview = buildSelectionPreview(selected, previewMaxChars)
+  const fallbackText =
+    selected.length > 0
+      ? `${fallbackPreview.text}${fallbackPreview.overflowCount > 0 ? `... +${fallbackPreview.overflowCount}` : ""}`
+      : ""
+  const { displayText } = useResponsiveSelectionPreview({
+    items: selected,
+    placeholder,
+    textRef,
+    measureRef,
+  })
+  const previewText = displayText || fallbackText || placeholder
+
   return (
     <div className="space-y-1">
       <Label className={labelClassName}>{label}</Label>
@@ -124,16 +270,24 @@ function MultiSelect({
             type="button"
             variant="outline"
             size="sm"
-            className={`w-full justify-between ${triggerClassName ?? ""}`}
+            className={`w-full min-w-0 justify-between ${triggerClassName ?? ""}`}
             disabled={disabled}
           >
-            <span className="truncate">
-              {selected.length > 0 ? `${selected.length} selected` : placeholder}
+            <span ref={textRef} className={textClass}>
+              {previewText || placeholder}
             </span>
             <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            <span
+              ref={measureRef}
+              aria-hidden="true"
+              className={`pointer-events-none absolute left-0 top-0 -z-10 whitespace-nowrap opacity-0 ${textClass}`}
+            />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-72 p-0" align="start">
+        <PopoverContent
+          className="w-[--radix-popover-trigger-width] min-w-[--radix-popover-trigger-width] p-0"
+          align="start"
+        >
           <Command>
             <CommandInput
               placeholder={searchPlaceholder}
@@ -516,121 +670,150 @@ export function FacetMatchesCard({
       <CardContent className="space-y-3 px-0">
         <div className="px-6">
           <div className="space-y-3">
-            <div className="grid items-end gap-3 md:grid-cols-4">
-              {manualCategoryControl ? (
-                <div>{manualCategoryControl}</div>
-              ) : null}
-              {manualBrandControl ? (
-                <div>{manualBrandControl}</div>
-              ) : null}
-              <div>
-                <MultiSelect
-                  label="Brand (Facet)"
-                  options={brandOptions}
-                  selected={selectedBrands}
-                  onChange={setSelectedBrands}
-                  placeholder="Select brands"
-                  searchPlaceholder="Search brands"
-                  disabled={!dataset}
-                  labelClassName="text-xs font-medium text-muted-foreground"
-                  triggerClassName="h-10 text-sm"
-                />
-              </div>
-              <div>
-                <MultiSelect
-                  label="Article Type"
-                  options={articleTypeOptions}
-                  selected={selectedArticleTypes}
-                  onChange={setSelectedArticleTypes}
-                  disabled={!dataset || selectedBrands.length === 0}
-                  placeholder={
-                    !dataset
-                      ? "Load dataset first"
-                      : selectedBrands.length === 0
-                        ? "Select brand first"
-                        : "Select article types"
-                  }
-                  searchPlaceholder="Search types"
-                  labelClassName="text-xs font-medium text-muted-foreground"
-                  triggerClassName="h-10 text-sm"
-                />
-              </div>
-            </div>
-            <div className="grid gap-3 md:grid-cols-4">
-              <div />
-              <div />
-              <div className="flex flex-wrap gap-1">
-                {selectedBrands.map((value) => (
-                  <Badge key={value} variant="secondary" className="gap-1 text-xs">
-                    {value}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSelectedBrands(selectedBrands.filter((item) => item !== value))
-                      }
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {selectedArticleTypes.map((value) => (
-                  <Badge key={value} variant="secondary" className="gap-1 text-xs">
-                    {value}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSelectedArticleTypes(
-                          selectedArticleTypes.filter((item) => item !== value)
-                        )
-                      }
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))}
-              </div>
-            </div>
-            {manualBaseActions ? (
-              <div className="flex flex-wrap items-center gap-2">{manualBaseActions}</div>
-            ) : null}
-            {detectedBrands.length > 0 ? (
-              <div className="text-xs text-muted-foreground">
-                Detected: {detectedBrands.join(", ")}
-              </div>
-            ) : (
-              <div className="text-xs text-muted-foreground">
-                No brand detected for this tile yet.
-              </div>
-            )}
-            {!dataset ? (
-              <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  No dataset loaded for this project.
-                </p>
-                {onOpenDatasetPanel ? (
-                  <Button type="button" variant="outline" size="sm" onClick={onOpenDatasetPanel}>
-                    Open Project Dataset
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
             {pluPanel ? (
               <Collapsible open={pluPanelOpen} onOpenChange={onPluPanelOpenChange}>
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-medium text-muted-foreground">PLUs</Label>
-                  <CollapsibleTrigger asChild>
-                    <Button type="button" variant="outline" size="sm" className="h-10 text-sm">
-                      PLUs ({pluCount ?? 0})
-                    </Button>
-                  </CollapsibleTrigger>
+                <div className="grid w-full items-end gap-3 md:grid-cols-5">
+                  {manualCategoryControl ? (
+                    <div className="w-full min-w-0">{manualCategoryControl}</div>
+                  ) : null}
+                  {manualBrandControl ? (
+                    <div className="w-full min-w-0">{manualBrandControl}</div>
+                  ) : null}
+                  <div className="w-full min-w-0">
+                    <MultiSelect
+                      label="Brand (Facet)"
+                      options={brandOptions}
+                      selected={selectedBrands}
+                      onChange={setSelectedBrands}
+                      placeholder="Select brands"
+                      searchPlaceholder="Search brands"
+                      disabled={!dataset}
+                      labelClassName="text-xs font-medium text-muted-foreground"
+                      triggerClassName="h-10 text-sm"
+                      previewMaxChars={34}
+                    />
+                  </div>
+                  <div className="w-full min-w-0">
+                    <MultiSelect
+                      label="Article Type"
+                      options={articleTypeOptions}
+                      selected={selectedArticleTypes}
+                      onChange={setSelectedArticleTypes}
+                      disabled={!dataset || selectedBrands.length === 0}
+                      placeholder={
+                        !dataset
+                          ? "Load dataset first"
+                          : selectedBrands.length === 0
+                            ? "Select brand first"
+                            : "Select article types"
+                      }
+                      searchPlaceholder="Search types"
+                      labelClassName="text-xs font-medium text-muted-foreground"
+                      triggerClassName="h-10 text-sm"
+                      previewMaxChars={40}
+                    />
+                  </div>
+                  <div className="flex w-full min-w-0">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CollapsibleTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-10 w-10"
+                            aria-label="Product IDs (PLUs)"
+                          >
+                            <List className="h-4 w-4" />
+                          </Button>
+                        </CollapsibleTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Product IDs (PLUs)
+                        {typeof pluCount === "number" ? ` (${pluCount})` : ""}
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                 </div>
+                {manualBaseActions ? (
+                  <div className="flex flex-wrap items-center gap-2">{manualBaseActions}</div>
+                ) : null}
+                {!dataset ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      No dataset loaded for this project.
+                    </p>
+                    {onOpenDatasetPanel ? (
+                      <Button type="button" variant="outline" size="sm" onClick={onOpenDatasetPanel}>
+                        Open Project Dataset
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <CollapsibleContent className="mt-3">{pluPanel}</CollapsibleContent>
               </Collapsible>
-            ) : null}
+            ) : (
+              <>
+                <div className="grid w-full items-end gap-3 md:grid-cols-5">
+                  {manualCategoryControl ? (
+                    <div className="w-full min-w-0">{manualCategoryControl}</div>
+                  ) : null}
+                  {manualBrandControl ? (
+                    <div className="w-full min-w-0">{manualBrandControl}</div>
+                  ) : null}
+                  <div className="w-full min-w-0">
+                    <MultiSelect
+                      label="Brand (Facet)"
+                      options={brandOptions}
+                      selected={selectedBrands}
+                      onChange={setSelectedBrands}
+                      placeholder="Select brands"
+                      searchPlaceholder="Search brands"
+                      disabled={!dataset}
+                      labelClassName="text-xs font-medium text-muted-foreground"
+                      triggerClassName="h-10 text-sm"
+                      previewMaxChars={34}
+                    />
+                  </div>
+                  <div className="w-full min-w-0">
+                    <MultiSelect
+                      label="Article Type"
+                      options={articleTypeOptions}
+                      selected={selectedArticleTypes}
+                      onChange={setSelectedArticleTypes}
+                      disabled={!dataset || selectedBrands.length === 0}
+                      placeholder={
+                        !dataset
+                          ? "Load dataset first"
+                          : selectedBrands.length === 0
+                            ? "Select brand first"
+                            : "Select article types"
+                      }
+                      searchPlaceholder="Search types"
+                      labelClassName="text-xs font-medium text-muted-foreground"
+                      triggerClassName="h-10 text-sm"
+                      previewMaxChars={40}
+                    />
+                  </div>
+                  <div />
+                </div>
+                {manualBaseActions ? (
+                  <div className="flex flex-wrap items-center gap-2">{manualBaseActions}</div>
+                ) : null}
+                {!dataset ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      No dataset loaded for this project.
+                    </p>
+                    {onOpenDatasetPanel ? (
+                      <Button type="button" variant="outline" size="sm" onClick={onOpenDatasetPanel}>
+                        Open Project Dataset
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         </div>
         {dataset ? (
@@ -718,7 +901,15 @@ function VirtualizedProductGrid({
           className="overflow-x-hidden"
           style={{ overflowX: "hidden" }}
         >
-          {({ columnIndex, rowIndex, style }) => {
+          {({
+            columnIndex,
+            rowIndex,
+            style,
+          }: {
+            columnIndex: number
+            rowIndex: number
+            style: CSSProperties
+          }) => {
             const index = rowIndex * columnCount + columnIndex
             if (index >= items.length) return null
             return (

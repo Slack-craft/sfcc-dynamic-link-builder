@@ -57,8 +57,8 @@ const HISTORY_STORAGE_KEY = "sca_dynamic_link_builder_history_v1"
 // -----------------------------
 
 const ADPACK_STORAGE_KEY = "sca_dynamic_link_builder_adpack_plus_v1"
-const PLU_PER_ROW = 3
-const MIN_VISIBLE_PLUS = 3
+const PLU_PER_ROW = 8
+const MIN_VISIBLE_PLUS = 8
 
 function parsePlusFromText(raw: string): string[] {
   return raw
@@ -596,19 +596,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     })
   }
 
-  function clearBaseSelection() {
-    setCategory(null)
-    setBrand(null)
-    commitState({
-      category: null,
-      brand: null,
-      extension,
-      plus,
-      previewPathOverride,
-      captureMode,
-    })
-  }
-
   const manualCategoryControl = (
     <SearchableSelect
       label="Category"
@@ -922,10 +909,9 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   }, [pluDrafts, visiblePluCount])
 
   const pluFieldsPanel = (
-    <div className="space-y-2">
-      <Label>PLUs (1-20)</Label>
+    <div className="space-y-1">
       <TooltipProvider delayDuration={250}>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid gap-2 grid-cols-4 sm:grid-cols-6 md:grid-cols-8">
           {visiblePluDrafts.map((plu, i) => {
             // --- 1. Normalise the current PLU ---
             const trimmed = (plu ?? "").trim()
@@ -1003,7 +989,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                 }}
                 placeholder={`PLU ${i + 1}`}
                 disabled={pluDisabled}
-                className={inputClass}
+                className={`h-8 w-full min-w-0 px-2 text-xs ${inputClass}`}
                 title={isExtracted ? "Extracted via OCR" : undefined}
               />
             )
@@ -1172,11 +1158,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           onOpenDatasetPanel={onOpenDatasetPanel}
           manualCategoryControl={manualCategoryControl}
           manualBrandControl={manualBrandControl}
-          manualBaseActions={
-            <Button type="button" variant="ghost" size="sm" onClick={clearBaseSelection}>
-              Clear base
-            </Button>
-          }
           pluPanel={pluFieldsPanel}
           pluPanelOpen={pluPanelOpen}
           onPluPanelOpenChange={setPluPanelOpen}

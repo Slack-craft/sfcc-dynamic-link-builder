@@ -2350,6 +2350,10 @@ export default function CatalogueBuilderPage() {
                                     <span>
                                       % Off: {selectedTile.offer?.percentOff?.raw ?? "-"}
                                     </span>
+                                    <span>
+                                      Detected Brands:{" "}
+                                      {detectedBrands.length > 0 ? detectedBrands.join(", ") : "-"}
+                                    </span>
                                   </div>
                                 </div>
                                 <div className="space-y-2">

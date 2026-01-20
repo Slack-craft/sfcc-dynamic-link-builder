@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Check, ChevronDown, X } from "lucide-react"
 import { toast } from "sonner"
 import type { CsvRow } from "@/lib/catalogueDataset/parseCsv"
@@ -36,6 +37,10 @@ type FacetMatchesCardProps = {
   manualCategoryControl?: React.ReactNode
   manualBrandControl?: React.ReactNode
   manualBaseActions?: React.ReactNode
+  pluPanel?: React.ReactNode
+  pluPanelOpen?: boolean
+  onPluPanelOpenChange?: (open: boolean) => void
+  pluCount?: number
   selectedBrands?: string[]
   selectedArticleTypes?: string[]
   onSelectedBrandsChange?: (next: string[]) => void
@@ -168,6 +173,10 @@ export function FacetMatchesCard({
   manualCategoryControl,
   manualBrandControl,
   manualBaseActions,
+  pluPanel,
+  pluPanelOpen,
+  onPluPanelOpenChange,
+  pluCount,
   selectedBrands = [],
   selectedArticleTypes = [],
   onSelectedBrandsChange,
@@ -608,6 +617,19 @@ export function FacetMatchesCard({
                   </Button>
                 ) : null}
               </div>
+            ) : null}
+            {pluPanel ? (
+              <Collapsible open={pluPanelOpen} onOpenChange={onPluPanelOpenChange}>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-medium text-muted-foreground">PLUs</Label>
+                  <CollapsibleTrigger asChild>
+                    <Button type="button" variant="outline" size="sm" className="h-10 text-sm">
+                      PLUs ({pluCount ?? 0})
+                    </Button>
+                  </CollapsibleTrigger>
+                </div>
+                <CollapsibleContent className="mt-3">{pluPanel}</CollapsibleContent>
+              </Collapsible>
             ) : null}
           </div>
         </div>

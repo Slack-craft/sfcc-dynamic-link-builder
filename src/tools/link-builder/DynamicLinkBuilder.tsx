@@ -439,6 +439,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   const [captureMode, setCaptureMode] = useState<LinkBuilderState["captureMode"]>(
     normalizedInitial.captureMode ?? "path+filters"
   )
+  const [pluPanelOpen, setPluPanelOpen] = useState(false)
 
   // History
   const [savedLinks, setSavedLinks] = useState<SavedLink[]>(() =>
@@ -920,6 +921,113 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     ]
   }, [pluDrafts, visiblePluCount])
 
+  const pluFieldsPanel = (
+    <div className="space-y-2">
+      <Label>PLUs (1-20)</Label>
+      <TooltipProvider delayDuration={250}>
+        <div className="grid grid-cols-3 gap-2">
+          {visiblePluDrafts.map((plu, i) => {
+            // --- 1. Normalise the current PLU ---
+            const trimmed = (plu ?? "").trim()
+
+            // --- 2. Decide whether we should check against AdPack ---
+            const shouldCheck = adpackLoaded && trimmed.length > 0
+
+            // --- 3. Check membership ---
+            const inAdpack = shouldCheck ? adpackSet.has(trimmed) : false
+
+            // --- 4. Decide styling ---
+            const adpackClass = !shouldCheck
+              ? ""
+              : inAdpack
+                ? "border-green-500 ring-1 ring-green-200 focus-visible:ring-green-300"
+                : "border-red-500 ring-1 ring-red-200 focus-visible:ring-red-300"
+            const isExtracted = extractedPluFlags?.[i] ?? false
+            const extractedClass = isExtracted
+              ? "bg-blue-50/70 dark:bg-blue-950/30"
+              : ""
+            const inputClass = [adpackClass, extractedClass].filter(Boolean).join(" ")
+
+            // --- 5. Build the Input ONCE ---
+            const inputEl = (
+              <Input
+                key={`plu-${i}`}
+                value={plu ?? ""}
+                onFocus={() => {
+                  activePluIndexRef.current = i
+                }}
+                onChange={(e) => {
+                  const next = e.target.value
+                  setPluDrafts((prev) => {
+                    const updated = [...prev]
+                    if (updated.length <= i) {
+                      updated.length = i + 1
+                    }
+                    updated[i] = next
+                    return updated
+                  })
+                }}
+                onBlur={(e) => {
+                  const trimmedValue = e.target.value.trim()
+                  const nextPlus = [...plus]
+                  if (nextPlus.length <= i) {
+                    nextPlus.length = i + 1
+                  }
+                  nextPlus[i] = trimmedValue
+                  setPluDrafts((prev) => {
+                    const updated = [...prev]
+                    if (updated.length <= i) {
+                      updated.length = i + 1
+                    }
+                    updated[i] = trimmedValue
+                    return updated
+                  })
+                  activePluIndexRef.current = null
+                  setPLU(i, trimmedValue, true)
+                  commitState({
+                    category,
+                    brand,
+                    extension,
+                    plus: nextPlus,
+                    previewPathOverride,
+                    captureMode,
+                  })
+                }}
+                onPaste={(e) => {
+                  if (pluDisabled) return
+                  const text = e.clipboardData.getData("text")
+                  if (/[\r\n\t,;|]/.test(text)) {
+                    e.preventDefault()
+                    applyPastedPLUs(i, text)
+                  }
+                }}
+                placeholder={`PLU ${i + 1}`}
+                disabled={pluDisabled}
+                className={inputClass}
+                title={isExtracted ? "Extracted via OCR" : undefined}
+              />
+            )
+
+            // --- 6. Always render a stable wrapper to avoid input remounts ---
+            return (
+              <Tooltip key={i}>
+                <TooltipTrigger asChild>{inputEl}</TooltipTrigger>
+                {shouldCheck && !inAdpack ? (
+                  <TooltipContent>
+                    <p>PLU not in loaded AdPack</p>
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
+            )
+          })}
+        </div>
+      </TooltipProvider>
+      <p className="text-xs text-muted-foreground">
+        Tip: paste a column from Excel into any PLU field to auto-fill multiple rows.
+      </p>
+    </div>
+  )
+
   // Ctrl+S / Cmd+S shortcut
   useEffect(() => {
     if (isEmbedded) return
@@ -1054,110 +1162,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                 ) : null}
               </div>
 
-              <div className="space-y-2">
-                <Label>PLUs (1-20)</Label>
-                <TooltipProvider delayDuration={250}>
-                  <div className="grid grid-cols-3 gap-2">
-                    {visiblePluDrafts.map((plu, i) => {
-                      // --- 1. Normalise the current PLU ---
-                      const trimmed = (plu ?? "").trim()
-
-                      // --- 2. Decide whether we should check against AdPack ---
-                      const shouldCheck = adpackLoaded && trimmed.length > 0
-
-                      // --- 3. Check membership ---
-                      const inAdpack = shouldCheck ? adpackSet.has(trimmed) : false
-
-                      // --- 4. Decide styling ---
-                      const adpackClass = !shouldCheck
-                        ? ""
-                        : inAdpack
-                          ? "border-green-500 ring-1 ring-green-200 focus-visible:ring-green-300"
-                          : "border-red-500 ring-1 ring-red-200 focus-visible:ring-red-300"
-                      const isExtracted = extractedPluFlags?.[i] ?? false
-                      const extractedClass = isExtracted
-                        ? "bg-blue-50/70 dark:bg-blue-950/30"
-                        : ""
-                      const inputClass = [adpackClass, extractedClass].filter(Boolean).join(" ")
-
-                      // --- 5. Build the Input ONCE ---
-                      const inputEl = (
-                        <Input
-                          key={`plu-${i}`}
-                          value={plu ?? ""}
-                          onFocus={() => {
-                            activePluIndexRef.current = i
-                          }}
-                          onChange={(e) => {
-                            const next = e.target.value
-                            setPluDrafts((prev) => {
-                              const updated = [...prev]
-                              if (updated.length <= i) {
-                                updated.length = i + 1
-                              }
-                              updated[i] = next
-                              return updated
-                            })
-                          }}
-                          onBlur={(e) => {
-                            const trimmedValue = e.target.value.trim()
-                            const nextPlus = [...plus]
-                            if (nextPlus.length <= i) {
-                              nextPlus.length = i + 1
-                            }
-                            nextPlus[i] = trimmedValue
-                            setPluDrafts((prev) => {
-                              const updated = [...prev]
-                              if (updated.length <= i) {
-                                updated.length = i + 1
-                              }
-                              updated[i] = trimmedValue
-                              return updated
-                            })
-                            activePluIndexRef.current = null
-                            setPLU(i, trimmedValue, true)
-                            commitState({
-                              category,
-                              brand,
-                              extension,
-                              plus: nextPlus,
-                              previewPathOverride,
-                              captureMode,
-                            })
-                          }}
-                          onPaste={(e) => {
-                            if (pluDisabled) return
-                            const text = e.clipboardData.getData("text")
-                            if (/[\r\n\t,;|]/.test(text)) {
-                              e.preventDefault()
-                              applyPastedPLUs(i, text)
-                            }
-                          }}
-                          placeholder={`PLU ${i + 1}`}
-                          disabled={pluDisabled}
-                          className={inputClass}
-                          title={isExtracted ? "Extracted via OCR" : undefined}
-                        />
-                      )
-
-                      // --- 6. Always render a stable wrapper to avoid input remounts ---
-                      return (
-                        <Tooltip key={i}>
-                          <TooltipTrigger asChild>{inputEl}</TooltipTrigger>
-                          {shouldCheck && !inAdpack ? (
-                            <TooltipContent>
-                              <p>PLU not in loaded AdPack</p>
-                            </TooltipContent>
-                          ) : null}
-                        </Tooltip>
-                      )
-                    })}
-
-                  </div></TooltipProvider>
-                <p className="text-xs text-muted-foreground">
-                  Tip: paste a column from Excel into any PLU field to auto-fill multiple rows.
-                </p>
-              </div>
             </div>
           </CardContent>
         </Card>
@@ -1173,6 +1177,10 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
               Clear base
             </Button>
           }
+          pluPanel={pluFieldsPanel}
+          pluPanelOpen={pluPanelOpen}
+          onPluPanelOpenChange={setPluPanelOpen}
+          pluCount={pluCount}
           selectedBrands={facetSelectedBrands}
           selectedArticleTypes={facetSelectedArticleTypes}
           onSelectedBrandsChange={onFacetSelectedBrandsChange}

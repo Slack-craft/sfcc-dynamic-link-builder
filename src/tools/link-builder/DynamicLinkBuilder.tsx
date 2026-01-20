@@ -149,6 +149,8 @@ function SearchableSelect(props: {
   disabled?: boolean
   onCommitNext?: () => void // NEW: called after Tab-select
   triggerRef?: React.RefObject<HTMLButtonElement | null>
+  labelClassName?: string
+  triggerClassName?: string
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null)
 
@@ -168,7 +170,17 @@ function SearchableSelect(props: {
   }
 
 
-  const { label, placeholder = "Select", options, value, onChange, disabled, onCommitNext } = props
+  const {
+    label,
+    placeholder = "Select",
+    options,
+    value,
+    onChange,
+    disabled,
+    onCommitNext,
+    labelClassName,
+    triggerClassName,
+  } = props
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
 
@@ -194,7 +206,7 @@ function SearchableSelect(props: {
 
   return (
     <div className="space-y-2">
-      <Label>{label}</Label>
+      <Label className={labelClassName}>{label}</Label>
 
       <Popover
         open={open}
@@ -212,7 +224,7 @@ function SearchableSelect(props: {
             ref={props.triggerRef}
             type="button"
             variant="outline"
-            className="w-full justify-between"
+            className={`w-full justify-between ${triggerClassName ?? ""}`}
             disabled={disabled}
             onKeyDown={(e) => {
               if (disabled) return
@@ -583,6 +595,72 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     })
   }
 
+  function clearBaseSelection() {
+    setCategory(null)
+    setBrand(null)
+    commitState({
+      category: null,
+      brand: null,
+      extension,
+      plus,
+      previewPathOverride,
+      captureMode,
+    })
+  }
+
+  const manualCategoryControl = (
+    <SearchableSelect
+      label="Category"
+      options={CATEGORY_OPTIONS}
+      value={category}
+      onChange={(opt) => {
+        const nextBrand = opt ? null : brand
+        setCategory(opt)
+        if (opt) setBrand(null)
+        commitState({
+          category: opt,
+          brand: nextBrand,
+          extension,
+          plus,
+          previewPathOverride,
+          captureMode,
+        })
+      }}
+      disabled={categoryDisabled}
+      placeholder={categoryDisabled ? "Disabled by selection rules." : "Type to search categories"}
+      onCommitNext={() => extensionRef.current?.focus()}
+      triggerRef={categoryTriggerRef}
+      labelClassName="text-xs font-medium text-muted-foreground"
+      triggerClassName="h-10 text-sm"
+    />
+  )
+
+  const manualBrandControl = (
+    <SearchableSelect
+      label="Brand (Base)"
+      options={BRAND_OPTIONS}
+      value={brand}
+      onChange={(opt) => {
+        const nextCategory = opt ? null : category
+        setBrand(opt)
+        if (opt) setCategory(null)
+        commitState({
+          category: nextCategory,
+          brand: opt,
+          extension,
+          plus,
+          previewPathOverride,
+          captureMode,
+        })
+      }}
+      disabled={brandDisabled}
+      placeholder={brandDisabled ? "Disabled by selection rules." : "Type to search brands"}
+      onCommitNext={() => extensionRef.current?.focus()}
+      labelClassName="text-xs font-medium text-muted-foreground"
+      triggerClassName="h-10 text-sm"
+    />
+  )
+
   function updateExtractedFlags(
     updater: (flags: boolean[]) => boolean[]
   ) {
@@ -922,82 +1000,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
             <CardTitle>Inputs</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Base selection */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="font-medium">Base Link (pick one)</h2>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setCategory(null)
-                    setBrand(null)
-                    commitState({
-                      category: null,
-                      brand: null,
-                      extension,
-                      plus,
-                      previewPathOverride,
-                      captureMode,
-                    })
-                  }}
-                >
-                  Clear base
-                </Button>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <SearchableSelect
-                  label="Category"
-                  options={CATEGORY_OPTIONS}
-                  value={category}
-                  onChange={(opt) => {
-                    const nextBrand = opt ? null : brand
-                    setCategory(opt)
-                    if (opt) setBrand(null)
-                    commitState({
-                      category: opt,
-                      brand: nextBrand,
-                      extension,
-                      plus,
-                      previewPathOverride,
-                      captureMode,
-                    })
-                  }}
-                  disabled={categoryDisabled}
-                placeholder={categoryDisabled ? "Disabled by selection rules." : "Type to search categories"}
-                onCommitNext={() => extensionRef.current?.focus()}
-                triggerRef={categoryTriggerRef}
-              />
-
-                <SearchableSelect
-                  label="Brand"
-                  options={BRAND_OPTIONS}
-                  value={brand}
-                  onChange={(opt) => {
-                    const nextCategory = opt ? null : category
-                    setBrand(opt)
-                    if (opt) setCategory(null)
-                    commitState({
-                      category: nextCategory,
-                      brand: opt,
-                      extension,
-                      plus,
-                      previewPathOverride,
-                      captureMode,
-                    })
-                  }}
-                  disabled={brandDisabled}
-                placeholder={brandDisabled ? "Disabled by selection rules." : "Type to search brands"}
-                onCommitNext={() => extensionRef.current?.focus()}
-              />
-              </div>
-
-            </div>
-
-            <Separator />
-
             {/* Refinement */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -1164,6 +1166,13 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           scope={scope}
           dataset={dataset}
           onOpenDatasetPanel={onOpenDatasetPanel}
+          manualCategoryControl={manualCategoryControl}
+          manualBrandControl={manualBrandControl}
+          manualBaseActions={
+            <Button type="button" variant="ghost" size="sm" onClick={clearBaseSelection}>
+              Clear base
+            </Button>
+          }
           selectedBrands={facetSelectedBrands}
           selectedArticleTypes={facetSelectedArticleTypes}
           onSelectedBrandsChange={onFacetSelectedBrandsChange}

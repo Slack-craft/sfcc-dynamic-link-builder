@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import { FixedSizeGrid } from "react-window"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
   Command,
   CommandEmpty,
@@ -33,6 +33,9 @@ type FacetMatchesCardProps = {
   scope?: "AU" | "NZ"
   dataset: FacetDataset | null
   onOpenDatasetPanel?: () => void
+  manualCategoryControl?: React.ReactNode
+  manualBrandControl?: React.ReactNode
+  manualBaseActions?: React.ReactNode
   selectedBrands?: string[]
   selectedArticleTypes?: string[]
   onSelectedBrandsChange?: (next: string[]) => void
@@ -53,6 +56,8 @@ type MultiSelectProps = {
   disabled?: boolean
   placeholder?: string
   searchPlaceholder?: string
+  labelClassName?: string
+  triggerClassName?: string
 }
 
 function buildQueryFromSelections(selected: Record<string, string[]>) {
@@ -82,6 +87,8 @@ function MultiSelect({
   disabled,
   placeholder = "Select",
   searchPlaceholder = "Search",
+  labelClassName,
+  triggerClassName,
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -105,14 +112,14 @@ function MultiSelect({
 
   return (
     <div className="space-y-1">
-      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Label className={labelClassName}>{label}</Label>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 w-full justify-between text-xs"
+            className={`w-full justify-between ${triggerClassName ?? ""}`}
             disabled={disabled}
           >
             <span className="truncate">
@@ -150,22 +157,6 @@ function MultiSelect({
           </Command>
         </PopoverContent>
       </Popover>
-      {selected.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
-          {selected.map((value) => (
-            <Badge key={value} variant="secondary" className="gap-1 text-xs">
-              {value}
-              <button
-                type="button"
-                onClick={() => toggle(value)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </Badge>
-          ))}
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -174,6 +165,9 @@ export function FacetMatchesCard({
   scope = "AU",
   dataset,
   onOpenDatasetPanel,
+  manualCategoryControl,
+  manualBrandControl,
+  manualBaseActions,
   selectedBrands = [],
   selectedArticleTypes = [],
   onSelectedBrandsChange,
@@ -291,6 +285,7 @@ export function FacetMatchesCard({
     })
     return { rows, count: rows.length, pluIds }
   }, [dataset, scope, selectedArticleTypes, selectedBrands])
+  const facetColumnCount = dataset?.columnMeta?.facetKeys.length ?? 0
 
   const excludedSet = useMemo(() => new Set(excludedPluIds), [excludedPluIds])
   const filteredPluIds = useMemo(
@@ -441,12 +436,9 @@ export function FacetMatchesCard({
     <Card className="lg:col-span-2 flex flex-col">
       <CardHeader>
         <div className="flex flex-wrap items-start gap-4">
-          <div className="space-y-1">
-            <CardTitle>Matches Preview</CardTitle>
-            <div className="text-xs text-muted-foreground">
-              Matching products: {matches.count}
-              {excludedPluIds.length > 0 ? ` (${excludedPluIds.length} excluded)` : ""}
-            </div>
+          <div className="flex flex-wrap items-center gap-3 text-sm font-medium">
+            <span>Facet columns detected: {facetColumnCount}</span>
+            <span className="text-muted-foreground">Matching products: {matches.count}</span>
           </div>
           <div className="flex min-w-0 flex-1 items-center">
             <Input
@@ -514,68 +506,109 @@ export function FacetMatchesCard({
       </CardHeader>
       <CardContent className="space-y-3 px-0">
         <div className="px-6">
-          <div className="grid gap-3">
-            <Card className="w-full">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Facet Filters</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {!dataset ? (
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">
-                      No dataset loaded for this project.
-                    </p>
-                    {onOpenDatasetPanel ? (
-                      <Button type="button" variant="outline" size="sm" onClick={onOpenDatasetPanel}>
-                        Open Project Dataset
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-start gap-4">
-                    <div className="space-y-2 min-w-[220px] flex-1">
-                      <MultiSelect
-                        label="Brand"
-                        options={brandOptions}
-                        selected={selectedBrands}
-                        onChange={setSelectedBrands}
-                        placeholder="Select brands"
-                        searchPlaceholder="Search brands"
-                      />
-                      {detectedBrands.length > 0 ? (
-                        <div className="text-xs text-muted-foreground">
-                          Detected: {detectedBrands.join(", ")}
-                        </div>
-                      ) : (
-                        <div className="text-xs text-muted-foreground">
-                          No brand detected for this tile yet.
-                        </div>
-                      )}
-                    </div>
-                    <div className="space-y-2 min-w-[220px] flex-1">
-                      <MultiSelect
-                        label="Article Type"
-                        options={articleTypeOptions}
-                        selected={selectedArticleTypes}
-                        onChange={setSelectedArticleTypes}
-                        disabled={selectedBrands.length === 0}
-                        placeholder={
-                          selectedBrands.length === 0
-                            ? "Select brand first"
-                            : "Select article types"
-                        }
-                        searchPlaceholder="Search types"
-                      />
-                    </div>
-                  </div>
-                )}
-                {dataset?.columnMeta ? (
-                  <p className="text-xs text-muted-foreground">
-                    Facet columns detected: {dataset.columnMeta.facetKeys.length}
-                  </p>
+          <div className="space-y-3">
+            <div className="grid items-end gap-3 md:grid-cols-4">
+              {manualCategoryControl ? (
+                <div>{manualCategoryControl}</div>
+              ) : null}
+              {manualBrandControl ? (
+                <div>{manualBrandControl}</div>
+              ) : null}
+              <div>
+                <MultiSelect
+                  label="Brand (Facet)"
+                  options={brandOptions}
+                  selected={selectedBrands}
+                  onChange={setSelectedBrands}
+                  placeholder="Select brands"
+                  searchPlaceholder="Search brands"
+                  disabled={!dataset}
+                  labelClassName="text-xs font-medium text-muted-foreground"
+                  triggerClassName="h-10 text-sm"
+                />
+              </div>
+              <div>
+                <MultiSelect
+                  label="Article Type"
+                  options={articleTypeOptions}
+                  selected={selectedArticleTypes}
+                  onChange={setSelectedArticleTypes}
+                  disabled={!dataset || selectedBrands.length === 0}
+                  placeholder={
+                    !dataset
+                      ? "Load dataset first"
+                      : selectedBrands.length === 0
+                        ? "Select brand first"
+                        : "Select article types"
+                  }
+                  searchPlaceholder="Search types"
+                  labelClassName="text-xs font-medium text-muted-foreground"
+                  triggerClassName="h-10 text-sm"
+                />
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-4">
+              <div />
+              <div />
+              <div className="flex flex-wrap gap-1">
+                {selectedBrands.map((value) => (
+                  <Badge key={value} variant="secondary" className="gap-1 text-xs">
+                    {value}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelectedBrands(selectedBrands.filter((item) => item !== value))
+                      }
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {selectedArticleTypes.map((value) => (
+                  <Badge key={value} variant="secondary" className="gap-1 text-xs">
+                    {value}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelectedArticleTypes(
+                          selectedArticleTypes.filter((item) => item !== value)
+                        )
+                      }
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            {manualBaseActions ? (
+              <div className="flex flex-wrap items-center gap-2">{manualBaseActions}</div>
+            ) : null}
+            {detectedBrands.length > 0 ? (
+              <div className="text-xs text-muted-foreground">
+                Detected: {detectedBrands.join(", ")}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                No brand detected for this tile yet.
+              </div>
+            )}
+            {!dataset ? (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  No dataset loaded for this project.
+                </p>
+                {onOpenDatasetPanel ? (
+                  <Button type="button" variant="outline" size="sm" onClick={onOpenDatasetPanel}>
+                    Open Project Dataset
+                  </Button>
                 ) : null}
-              </CardContent>
-            </Card>
+              </div>
+            ) : null}
           </div>
         </div>
         {dataset ? (

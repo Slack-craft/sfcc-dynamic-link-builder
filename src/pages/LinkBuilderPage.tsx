@@ -106,6 +106,8 @@ export default function LinkBuilderPage() {
     previewPathOverride: "",
     captureMode: "path+filters",
   })
+  const [facetSelectedBrands, setFacetSelectedBrands] = useState<string[]>([])
+  const [facetSelectedArticleTypes, setFacetSelectedArticleTypes] = useState<string[]>([])
   const [liveLinkUrl, setLiveLinkUrl] = useState("")
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
   const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
@@ -338,11 +340,17 @@ export default function LinkBuilderPage() {
 
   return (
     <>
-      <DynamicLinkBuilder
-        initialState={builderState}
-        onChange={setBuilderState}
-        liveLinkUrl={liveLinkUrl}
-        onLiveLinkChange={setLiveLinkUrl}
+    <DynamicLinkBuilder
+      initialState={builderState}
+      onChange={setBuilderState}
+      scope="AU"
+      dataset={null}
+      facetSelectedBrands={facetSelectedBrands}
+      facetSelectedArticleTypes={facetSelectedArticleTypes}
+      onFacetSelectedBrandsChange={setFacetSelectedBrands}
+      onFacetSelectedArticleTypesChange={setFacetSelectedArticleTypes}
+      liveLinkUrl={liveLinkUrl}
+      onLiveLinkChange={setLiveLinkUrl}
         liveLinkEditable={extensionStatus !== "available"}
         liveLinkInputRef={liveLinkInputRef}
         previewUrl={previewUrl}

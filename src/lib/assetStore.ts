@@ -9,9 +9,18 @@ export type AssetRecord = {
   createdAt: number
 }
 
+export type DatasetRecord = {
+  datasetKey: string
+  projectId: string
+  filename: string
+  csvText: string
+  createdAt: number
+}
+
 const DB_NAME = "sca_catalogue_asset_store"
 const STORE_NAME = "assets"
-const DB_VERSION = 1
+const DATASET_STORE = "datasets"
+const DB_VERSION = 2
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
@@ -24,6 +33,9 @@ function openDb(): Promise<IDBDatabase> {
       const db = request.result
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: "assetId" })
+      }
+      if (!db.objectStoreNames.contains(DATASET_STORE)) {
+        db.createObjectStore(DATASET_STORE, { keyPath: "datasetKey" })
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -105,5 +117,49 @@ export async function deleteAssetsForProject(projectId: string): Promise<void> {
     tx.onerror = () => reject(tx.error ?? new Error("Failed to clear assets"))
     const store = tx.objectStore(STORE_NAME)
     assets.forEach((asset) => store.delete(asset.assetId))
+  })
+}
+
+export async function putProjectDataset(
+  datasetKey: string,
+  projectId: string,
+  filename: string,
+  csvText: string
+): Promise<void> {
+  const record: DatasetRecord = {
+    datasetKey,
+    projectId,
+    filename,
+    csvText,
+    createdAt: Date.now(),
+  }
+  const db = await openDb()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(DATASET_STORE, "readwrite")
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to store dataset"))
+    tx.objectStore(DATASET_STORE).put(record)
+  })
+}
+
+export async function getProjectDataset(
+  datasetKey: string
+): Promise<DatasetRecord | undefined> {
+  const db = await openDb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DATASET_STORE, "readonly")
+    const request = tx.objectStore(DATASET_STORE).get(datasetKey)
+    request.onsuccess = () => resolve(request.result as DatasetRecord | undefined)
+    request.onerror = () => reject(request.error ?? new Error("Failed to read dataset"))
+  })
+}
+
+export async function deleteProjectDataset(datasetKey: string): Promise<void> {
+  const db = await openDb()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(DATASET_STORE, "readwrite")
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to delete dataset"))
+    tx.objectStore(DATASET_STORE).delete(datasetKey)
   })
 }

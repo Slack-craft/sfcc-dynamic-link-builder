@@ -42,7 +42,14 @@ import {
   updateTile,
 } from "@/tools/catalogue-builder/catalogueProjectsStorage"
 import { clearImagesForProject, getImage, putImage } from "@/tools/catalogue-builder/imageStore"
-import { deleteAssetsForProject, getAsset, putAsset } from "@/lib/assetStore"
+import {
+  deleteAssetsForProject,
+  getAsset,
+  putAsset,
+  putProjectDataset,
+  getProjectDataset,
+  deleteProjectDataset,
+} from "@/lib/assetStore"
 import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
 import { extractTextFromRect, loadPdfDocument, type PdfRect } from "@/tools/catalogue-builder/pdfTextExtract"
 import { parseOfferText } from "@/lib/extraction/parseOfferText"
@@ -50,6 +57,8 @@ import { extractPlusFromPdfText } from "@/lib/extraction/pluUtils"
 import { clearObjectUrlCache, getObjectUrl } from "@/lib/images/objectUrlCache"
 import { extensionRequest } from "@/lib/preview/extensionRequest"
 import { hasExtensionPing } from "@/lib/preview/hasExtension"
+import { parseCsvText, type CsvRow } from "@/lib/catalogueDataset/parseCsv"
+import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
  
 import type {
   CatalogueProject,
@@ -205,6 +214,14 @@ type PdfExportEntry = {
   filename?: string
   spreadNumber?: number
   pages: Record<string, PdfExportPage> | PdfExportPage[]
+}
+
+type DatasetCache = {
+  headers: string[]
+  rowsRef: React.MutableRefObject<CsvRow[]>
+  rowCount: number
+  columnMeta: ReturnType<typeof detectFacetColumns>
+  version: number
 }
 
 function sanitizeTileId(value: string) {
@@ -464,6 +481,8 @@ export default function CatalogueBuilderPage() {
   const [draftExtractedFlags, setDraftExtractedFlags] = useState<boolean[]>(() =>
     createEmptyExtractedFlags()
   )
+  const [draftFacetBrands, setDraftFacetBrands] = useState<string[]>([])
+  const [draftFacetArticleTypes, setDraftFacetArticleTypes] = useState<string[]>([])
   const [tileThumbUrls, setTileThumbUrls] = useState<Record<string, string>>({})
   const [selectedColorUrl, setSelectedColorUrl] = useState<string | null>(null)
   const [pdfExtractRunning, setPdfExtractRunning] = useState(false)
@@ -475,6 +494,8 @@ export default function CatalogueBuilderPage() {
   const [draftLinkSource, setDraftLinkSource] = useState<"manual" | "live">("manual")
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
   const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
+  const [datasetMeta, setDatasetMeta] = useState<DatasetCache | null>(null)
+  const datasetRowsRef = useRef<CsvRow[]>([])
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
   const [extensionStatus, setExtensionStatus] = useState<
     "unknown" | "available" | "unavailable"
@@ -483,6 +504,7 @@ export default function CatalogueBuilderPage() {
   const liveLinkInputRef = useRef<HTMLInputElement | null>(null)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
+  const datasetInputRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
   const lastUploadSignatureRef = useRef<string | null>(null)
 
@@ -531,6 +553,42 @@ export default function CatalogueBuilderPage() {
     }
   }, [project?.id, project?.pdfAssetIds])
 
+  useEffect(() => {
+    let cancelled = false
+
+    async function hydrateDataset() {
+      if (!project || !project.dataset) {
+        datasetRowsRef.current = []
+        setDatasetMeta(null)
+        return
+      }
+
+      const datasetKey = getDatasetKey(project.id, project.dataset.id)
+      const record = await getProjectDataset(datasetKey)
+      if (cancelled) return
+      if (!record?.csvText) {
+        datasetRowsRef.current = []
+        setDatasetMeta(null)
+        return
+      }
+
+      const parsed = parseCsvText(record.csvText)
+      datasetRowsRef.current = parsed.rows
+      setDatasetMeta({
+        headers: parsed.headers,
+        rowsRef: datasetRowsRef,
+        rowCount: parsed.rows.length,
+        columnMeta: detectFacetColumns(parsed.headers),
+        version: Date.now(),
+      })
+    }
+
+    void hydrateDataset()
+    return () => {
+      cancelled = true
+    }
+  }, [project?.id, project?.dataset?.id])
+
   const projectBar = (
     <div className="flex flex-wrap items-center gap-2">
       <Label className="text-xs font-medium uppercase text-muted-foreground">Project</Label>
@@ -570,10 +628,14 @@ export default function CatalogueBuilderPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
+          <AlertDialogAction
               onClick={async () => {
             if (!project) return
             await deleteAssetsForProject(project.id)
+            if (project.dataset) {
+              const datasetKey = getDatasetKey(project.id, project.dataset.id)
+              await deleteProjectDataset(datasetKey)
+            }
             clearObjectUrlCache()
             deleteProject(project.id)
             setSelectedTileId(null)
@@ -587,6 +649,11 @@ export default function CatalogueBuilderPage() {
       {project ? (
         <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
           {project.region}
+        </span>
+      ) : null}
+      {project?.dataset ? (
+        <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+          Dataset: {project.dataset.filename}
         </span>
       ) : null}
       <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
@@ -844,6 +911,8 @@ export default function CatalogueBuilderPage() {
       setDraftLinkState(createEmptyLinkBuilderState())
       setDraftLinkOutput("")
       setDraftExtractedFlags(createEmptyExtractedFlags())
+      setDraftFacetBrands([])
+      setDraftFacetArticleTypes([])
       return
     }
     setDraftTitle(selectedTile.title ?? "")
@@ -855,6 +924,8 @@ export default function CatalogueBuilderPage() {
     setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
     setDraftLiveCapturedUrl(selectedTile.liveCapturedUrl ?? "")
     setDraftLinkSource(selectedTile.linkSource ?? "manual")
+    setDraftFacetBrands(selectedTile.facetBuilder?.selectedBrands ?? [])
+    setDraftFacetArticleTypes(selectedTile.facetBuilder?.selectedArticleTypes ?? [])
   }, [selectedTile])
 
   useEffect(() => {
@@ -881,6 +952,10 @@ export default function CatalogueBuilderPage() {
     return files
       .map((file) => `${file.name}:${file.size}:${file.lastModified}`)
       .join("|")
+  }
+
+  function getDatasetKey(projectId: string, datasetId: string) {
+    return `${projectId}:catalogueDataset:${datasetId}`
   }
 
   async function createTilesFromFiles(fileList: FileList, replaceExisting: boolean) {
@@ -940,6 +1015,10 @@ export default function CatalogueBuilderPage() {
           dynamicLink: undefined,
           linkBuilderState: createEmptyLinkBuilderState(),
           extractedPluFlags: createEmptyExtractedFlags(),
+          facetBuilder: {
+            selectedBrands: [],
+            selectedArticleTypes: [],
+          },
           linkSource: "manual",
           liveCapturedUrl: undefined,
           imageKey: colorKey,
@@ -1005,6 +1084,54 @@ export default function CatalogueBuilderPage() {
     event.target.value = ""
   }
 
+  async function handleDatasetUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    if (!project) return
+    const file = event.target.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    const parsed = parseCsvText(text)
+    const datasetId = crypto.randomUUID()
+    const datasetKey = getDatasetKey(project.id, datasetId)
+    await putProjectDataset(datasetKey, project.id, file.name, text)
+
+    datasetRowsRef.current = parsed.rows
+    setDatasetMeta({
+      headers: parsed.headers,
+      rowsRef: datasetRowsRef,
+      rowCount: parsed.rows.length,
+      columnMeta: detectFacetColumns(parsed.headers),
+      version: Date.now(),
+    })
+
+    const updated: CatalogueProject = {
+      ...project,
+      dataset: {
+        id: datasetId,
+        filename: file.name,
+        rowCount: parsed.rows.length,
+        headers: parsed.headers,
+        loadedAt: new Date().toISOString(),
+      },
+      updatedAt: new Date().toISOString(),
+    }
+    upsertProject(updated)
+    event.target.value = ""
+  }
+
+  async function handleClearDataset() {
+    if (!project || !project.dataset) return
+    const datasetKey = getDatasetKey(project.id, project.dataset.id)
+    await deleteProjectDataset(datasetKey)
+    datasetRowsRef.current = []
+    setDatasetMeta(null)
+    const updated: CatalogueProject = {
+      ...project,
+      dataset: null,
+      updatedAt: new Date().toISOString(),
+    }
+    upsertProject(updated)
+  }
+
   function handleUploadChange(event: React.ChangeEvent<HTMLInputElement>) {
     const files = event.target.files
     if (!files || files.length === 0) return
@@ -1049,6 +1176,10 @@ export default function CatalogueBuilderPage() {
       linkSource,
       linkBuilderState: overrides?.linkBuilderState ?? draftLinkState,
       extractedPluFlags: draftExtractedFlags,
+      facetBuilder: {
+        selectedBrands: draftFacetBrands,
+        selectedArticleTypes: draftFacetArticleTypes,
+      },
     })
     upsertProject(updated)
   }
@@ -1075,6 +1206,8 @@ export default function CatalogueBuilderPage() {
     draftLinkOutput,
     draftLinkState,
     draftExtractedFlags,
+    draftFacetBrands,
+    draftFacetArticleTypes,
     draftLiveCapturedUrl,
     draftLinkSource,
     project,
@@ -1873,6 +2006,40 @@ export default function CatalogueBuilderPage() {
         {projectBar}
       </div>
       <Separator />
+      {project ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Project Dataset</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <Input
+                ref={datasetInputRef}
+                type="file"
+                accept=".csv"
+                onChange={handleDatasetUpload}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleClearDataset}
+                disabled={!project.dataset}
+              >
+                Clear dataset
+              </Button>
+            </div>
+            {project.dataset ? (
+              <div className="text-xs text-muted-foreground">
+                {project.dataset.filename} - {project.dataset.rowCount} rows
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                No dataset uploaded for this project.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {project.stage === "setup" ? (
@@ -2181,6 +2348,13 @@ export default function CatalogueBuilderPage() {
                           initialState={draftLinkState}
                           onChange={setDraftLinkState}
                           onOutputChange={setDraftLinkOutput}
+                          scope={project?.region ?? "AU"}
+                          dataset={datasetMeta}
+                          onOpenDatasetPanel={() => datasetInputRef.current?.click()}
+                          facetSelectedBrands={draftFacetBrands}
+                          facetSelectedArticleTypes={draftFacetArticleTypes}
+                          onFacetSelectedBrandsChange={setDraftFacetBrands}
+                          onFacetSelectedArticleTypesChange={setDraftFacetArticleTypes}
                           liveLinkUrl={draftLiveCapturedUrl}
                           onLiveLinkChange={setDraftLiveCapturedUrl}
                           liveLinkEditable={extensionStatus !== "available"}

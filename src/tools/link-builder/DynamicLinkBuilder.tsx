@@ -12,6 +12,7 @@ import type { LinkBuilderOption, LinkBuilderState } from "@/tools/link-builder/l
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { toast } from "sonner"
+import { FacetBuilderCard, type FacetDataset } from "@/components/facet-builder/facet-builder-card"
 
 const CATEGORY_OPTIONS: LinkBuilderOption[] = [
   { label: "Catalog", value: "catalogue-onsale" },
@@ -295,6 +296,13 @@ type DynamicLinkBuilderProps = {
   initialState?: LinkBuilderState
   onChange?: (state: LinkBuilderState) => void
   onOutputChange?: (output: string) => void
+  scope?: "AU" | "NZ"
+  dataset?: FacetDataset | null
+  onOpenDatasetPanel?: () => void
+  facetSelectedBrands?: string[]
+  facetSelectedArticleTypes?: string[]
+  onFacetSelectedBrandsChange?: (next: string[]) => void
+  onFacetSelectedArticleTypesChange?: (next: string[]) => void
   liveLinkUrl?: string
   onLiveLinkChange?: (value: string) => void
   liveLinkEditable?: boolean
@@ -321,6 +329,13 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       initialState,
       onChange,
       onOutputChange,
+      scope = "AU",
+      dataset = null,
+      onOpenDatasetPanel,
+      facetSelectedBrands,
+      facetSelectedArticleTypes,
+      onFacetSelectedBrandsChange,
+      onFacetSelectedArticleTypesChange,
       liveLinkUrl,
       onLiveLinkChange,
       liveLinkEditable = false,
@@ -1119,6 +1134,28 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
             </div>
           </CardContent>
         </Card>
+
+        <FacetBuilderCard
+          scope={scope}
+          dataset={dataset}
+          onOpenDatasetPanel={onOpenDatasetPanel}
+          selectedBrands={facetSelectedBrands}
+          selectedArticleTypes={facetSelectedArticleTypes}
+          onSelectedBrandsChange={onFacetSelectedBrandsChange}
+          onSelectedArticleTypesChange={onFacetSelectedArticleTypesChange}
+          onApplyExtension={(query) => {
+            const nextExtension = query || ""
+            setExtension(nextExtension)
+            commitState({
+              category,
+              brand,
+              extension: nextExtension,
+              plus,
+              previewPathOverride,
+              captureMode,
+            })
+          }}
+        />
 
         {/* Output */}
         <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]">

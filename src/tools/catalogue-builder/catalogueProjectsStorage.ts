@@ -12,6 +12,7 @@ function normalizeProject(value: unknown): CatalogueProject | null {
   const project = value as CatalogueProject & {
     tileImageIds?: string[]
     pdfIds?: string[]
+    dataset?: CatalogueProject["dataset"]
   }
   if (
     typeof project.id !== "string" ||
@@ -44,6 +45,10 @@ function normalizeProject(value: unknown): CatalogueProject | null {
     project.tileMatches && typeof project.tileMatches === "object"
       ? project.tileMatches
       : {}
+  const dataset =
+    project.dataset && typeof project.dataset === "object"
+      ? project.dataset
+      : null
 
   return {
     id: project.id,
@@ -54,6 +59,7 @@ function normalizeProject(value: unknown): CatalogueProject | null {
     updatedAt: project.updatedAt,
     imageAssetIds,
     pdfAssetIds,
+    dataset,
     detectionMaps:
       project.detectionMaps && typeof project.detectionMaps === "object"
         ? project.detectionMaps
@@ -101,6 +107,7 @@ export function createProject(name: string, region: Region): CatalogueProject {
     updatedAt: now,
     imageAssetIds: [],
     pdfAssetIds: [],
+    dataset: null,
     detectionMaps: {},
     pdfDetection: {},
     tileMatches: {},

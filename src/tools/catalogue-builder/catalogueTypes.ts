@@ -27,6 +27,10 @@ export type Tile = {
   mappedBoxIndex?: number
   originalFileName?: string
   linkBuilderState?: LinkBuilderState
+  facetBuilder?: {
+    selectedBrands: string[]
+    selectedArticleTypes: string[]
+  }
   linkSource?: "manual" | "live"
   liveCapturedUrl?: string | null
   imageKey?: string
@@ -44,6 +48,14 @@ export type DetectionMaps = Record<
 
 export type PdfDetectionState = Record<string, unknown>
 
+export type ProjectDatasetMeta = {
+  id: string
+  filename: string
+  rowCount: number
+  headers: string[]
+  loadedAt: string
+}
+
 export type CatalogueProject = {
   id: string
   name: string
@@ -53,6 +65,7 @@ export type CatalogueProject = {
   updatedAt: string
   imageAssetIds: string[]
   pdfAssetIds: string[]
+  dataset?: ProjectDatasetMeta | null
   detectionMaps: DetectionMaps
   pdfDetection: PdfDetectionState
   tileMatches: Record<string, string>

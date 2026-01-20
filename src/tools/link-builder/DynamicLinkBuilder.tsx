@@ -303,6 +303,7 @@ type DynamicLinkBuilderProps = {
   onOpenPreview?: () => void
   onLinkViaPreview?: () => void
   previewStatusText?: string
+  previewExtraControls?: React.ReactNode
   mode?: "full" | "embedded"
   hideHistory?: boolean
   hideAdpack?: boolean
@@ -328,6 +329,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       onOpenPreview,
       onLinkViaPreview,
       previewStatusText,
+      previewExtraControls,
       mode = "full",
       hideHistory = false,
       hideAdpack = false,
@@ -1125,6 +1127,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
               <CardTitle>Output</CardTitle>
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 {previewStatusText ? <span>{previewStatusText}</span> : null}
+                {previewExtraControls}
                 {onOpenPreview ? (
                   <Button type="button" size="sm" variant="outline" onClick={onOpenPreview}>
                     Open Preview
@@ -1143,12 +1146,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
               <Label>Live Link (from Preview)</Label>
               <Input
                 ref={liveLinkInputRef}
-                value={liveLinkUrl || previewUrl || ""}
-                onFocus={() => {
-                  if (liveLinkEditable && !liveLinkUrl && previewUrl) {
-                    onLiveLinkChange?.("")
-                  }
-                }}
+                value={liveLinkUrl || ""}
                 onChange={(event) => onLiveLinkChange?.(event.target.value)}
                 placeholder="Captured from Preview window"
                 readOnly={!liveLinkEditable}

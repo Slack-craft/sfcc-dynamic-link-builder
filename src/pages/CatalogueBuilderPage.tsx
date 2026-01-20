@@ -272,6 +272,12 @@ function buildIdFilter(pluValues: string[]) {
   return `?prefn1=id&prefv1=${joined}`
 }
 
+function buildPlusArray(values: string[]) {
+  return Array.from({ length: Math.max(MAX_PLUS_FIELDS, values.length) }, (_, index) => {
+    return values[index] ?? ""
+  })
+}
+
 function isBrandPath(pathname: string) {
   return /^\/brands\/[^/]+$/i.test(pathname)
 }
@@ -465,7 +471,10 @@ export default function CatalogueBuilderPage() {
   const [pdfAssetNames, setPdfAssetNames] = useState<Record<string, string>>({})
   const [offerDebugOpen, setOfferDebugOpen] = useState(false)
   const [offerTextDebugOpen, setOfferTextDebugOpen] = useState(false)
-  const [draftLiveLinkUrl, setDraftLiveLinkUrl] = useState("")
+  const [draftLiveCapturedUrl, setDraftLiveCapturedUrl] = useState("")
+  const [draftLinkSource, setDraftLinkSource] = useState<"manual" | "live">("manual")
+  const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
+  const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
   const [extensionStatus, setExtensionStatus] = useState<
     "unknown" | "available" | "unavailable"
@@ -739,10 +748,16 @@ export default function CatalogueBuilderPage() {
     () => tiles.find((tile) => tile.id === selectedTileId) ?? null,
     [tiles, selectedTileId]
   )
-  const previewUrl = useMemo(
+  const manualPreviewUrl = useMemo(
     () => buildPreviewUrlFromState(draftLinkState, project?.region),
     [draftLinkState, project?.region]
   )
+  const previewUrl = useMemo(() => {
+    if (draftLinkSource === "live" && draftLiveCapturedUrl) {
+      return draftLiveCapturedUrl
+    }
+    return manualPreviewUrl
+  }, [draftLinkSource, draftLiveCapturedUrl, manualPreviewUrl])
 
   function setProjectStage(nextStage: ProjectStage) {
     if (!project) return
@@ -838,7 +853,8 @@ export default function CatalogueBuilderPage() {
     setDraftLinkState(selectedTile.linkBuilderState ?? createEmptyLinkBuilderState())
     setDraftLinkOutput(selectedTile.dynamicLink ?? "")
     setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
-    setDraftLiveLinkUrl(selectedTile.liveLinkUrl ?? "")
+    setDraftLiveCapturedUrl(selectedTile.liveCapturedUrl ?? "")
+    setDraftLinkSource(selectedTile.linkSource ?? "manual")
   }, [selectedTile])
 
   useEffect(() => {
@@ -924,6 +940,8 @@ export default function CatalogueBuilderPage() {
           dynamicLink: undefined,
           linkBuilderState: createEmptyLinkBuilderState(),
           extractedPluFlags: createEmptyExtractedFlags(),
+          linkSource: "manual",
+          liveCapturedUrl: undefined,
           imageKey: colorKey,
           originalFileName: file.name,
         })
@@ -1015,17 +1033,20 @@ export default function CatalogueBuilderPage() {
   function saveSelectedTile(overrides?: {
     linkBuilderState?: LinkBuilderState
     dynamicLink?: string
-    liveLinkUrl?: string
+    liveCapturedUrl?: string
+    linkSource?: "manual" | "live"
   }) {
     if (!project || !selectedTile) return
-    const liveLink = overrides?.liveLinkUrl ?? draftLiveLinkUrl
+    const liveCaptured = overrides?.liveCapturedUrl ?? draftLiveCapturedUrl
+    const linkSource = overrides?.linkSource ?? draftLinkSource
     const updated = updateTile(project, selectedTile.id, {
       title: draftTitle.trim() || undefined,
       titleEditedManually: draftTitleEditedManually,
       status: draftStatus,
       notes: draftNotes.trim() || undefined,
       dynamicLink: overrides?.dynamicLink?.trim() || draftLinkOutput.trim() || undefined,
-      liveLinkUrl: liveLink.trim() || undefined,
+      liveCapturedUrl: liveCaptured.trim() || undefined,
+      linkSource,
       linkBuilderState: overrides?.linkBuilderState ?? draftLinkState,
       extractedPluFlags: draftExtractedFlags,
     })
@@ -1042,7 +1063,8 @@ export default function CatalogueBuilderPage() {
     saveSelectedTile({
       linkBuilderState: result?.state,
       dynamicLink: result?.output,
-      liveLinkUrl: draftLiveLinkUrl,
+      liveCapturedUrl: draftLiveCapturedUrl,
+      linkSource: draftLinkSource,
     })
   }, [
     selectedTile,
@@ -1053,7 +1075,8 @@ export default function CatalogueBuilderPage() {
     draftLinkOutput,
     draftLinkState,
     draftExtractedFlags,
-    draftLiveLinkUrl,
+    draftLiveCapturedUrl,
+    draftLinkSource,
     project,
   ])
 
@@ -1062,10 +1085,9 @@ export default function CatalogueBuilderPage() {
       const msg = event.data
       if (!msg || msg.type !== "SCA_LINK_SESSION_CLOSED") return
       if (!msg.finalUrl) return
-      setDraftLiveLinkUrl(msg.finalUrl)
+      handleCapturedUrl(msg.finalUrl)
       setAwaitingManualLink(false)
       setExtensionStatus("available")
-      applyCapturedUrl(msg.finalUrl)
       toast.success("Live Link captured")
     }
 
@@ -1112,9 +1134,8 @@ export default function CatalogueBuilderPage() {
           trimmed.startsWith("https://staging.supercheapauto.com.au/") ||
           trimmed.startsWith("https://staging.supercheapauto.co.nz/")
         if (isAllowed) {
-          setDraftLiveLinkUrl(trimmed)
+          handleCapturedUrl(trimmed)
           setAwaitingManualLink(false)
-          applyCapturedUrl(trimmed)
           toast.success("Live Link pasted")
           return
         }
@@ -1162,6 +1183,13 @@ export default function CatalogueBuilderPage() {
       nextState.extension = capturedSearch
     }
 
+    if (pathname === "/catalogue-out-now") {
+      nextState.category = { label: "Catalog", value: "catalogue-onsale" }
+      if (captureMode === "path+filters") {
+        nextState.previewPathOverride = "/catalogue-out-now"
+      }
+    }
+
     if (captureMode === "path+filters") {
       if (isBrandPath(pathname)) {
         nextState.previewPathOverride = pathname
@@ -1173,13 +1201,122 @@ export default function CatalogueBuilderPage() {
           nextState.brand = match
           nextState.category = null
         }
-      } else if (pathname === "/catalogue-out-now") {
-        nextState.previewPathOverride = "/catalogue-out-now"
       }
     }
 
     setDraftLinkState(nextState)
     setDraftLinkOutput(buildDynamicOutputFromState(nextState))
+  }
+
+  function convertCapturedUrlToBuilderState(
+    finalUrl: string,
+    currentState: LinkBuilderState
+  ) {
+    let parsed: URL
+    try {
+      parsed = new URL(finalUrl)
+    } catch {
+      return { nextState: currentState, didConvert: false, warnings: ["Invalid URL"] }
+    }
+
+    const pathname = parsed.pathname ?? ""
+    const capturedSearch = parsed.search ?? ""
+    const params = new URLSearchParams(parsed.search)
+
+    const productMatch = pathname.match(/\/p\/[^/]+\/(\d{4,8})\.html/i)
+    if (productMatch) {
+      const plu = productMatch[1]
+      return {
+        nextState: {
+          ...currentState,
+          category: null,
+          brand: null,
+          extension: "",
+          plus: buildPlusArray([plu]),
+          previewPathOverride: "",
+        },
+        didConvert: true,
+        warnings: [],
+      }
+    }
+
+    const prefn1 = params.get("prefn1")
+    const prefv1 = params.get("prefv1")
+    if (prefn1?.toLowerCase() === "id" && prefv1) {
+      const parsedPlus = prefv1
+        .split("|")
+        .map((value) => value.trim())
+        .filter(Boolean)
+      if (parsedPlus.length > 0) {
+        const baseState =
+          currentState.category || currentState.brand
+            ? currentState
+            : { ...currentState, category: { label: "Catalog", value: "catalogue-onsale" } }
+        return {
+          nextState: {
+            ...baseState,
+            extension: "",
+            plus: buildPlusArray(parsedPlus),
+            previewPathOverride: "",
+          },
+          didConvert: true,
+          warnings: [],
+        }
+      }
+    }
+
+    if (pathname === "/catalogue-out-now") {
+      return {
+        nextState: {
+          ...currentState,
+          category: { label: "Catalog", value: "catalogue-onsale" },
+          brand: null,
+          extension: capturedSearch,
+          plus: buildPlusArray([]),
+          previewPathOverride: "/catalogue-out-now",
+        },
+        didConvert: true,
+        warnings: [],
+      }
+    }
+
+    if (isBrandPath(pathname)) {
+      const stub = getBrandStub(pathname)
+      const match = BRAND_OPTIONS.find(
+        (option) => slugifyLabel(option.label) === stub
+      )
+      if (!match) {
+        return {
+          nextState: currentState,
+          didConvert: false,
+          warnings: ["Unable to map brand from captured URL."],
+        }
+      }
+      return {
+        nextState: {
+          ...currentState,
+          brand: match,
+          category: null,
+          extension: capturedSearch,
+          plus: buildPlusArray([]),
+          previewPathOverride: pathname,
+        },
+        didConvert: true,
+        warnings: [],
+      }
+    }
+
+    return {
+      nextState: currentState,
+      didConvert: false,
+      warnings: ["Unable to convert this URL to a dynamic link yet."],
+    }
+  }
+
+  function handleCapturedUrl(finalUrl: string) {
+    setDraftLiveCapturedUrl(finalUrl)
+    setPendingCapturedUrl(finalUrl)
+    setCaptureDialogOpen(true)
   }
 
   async function handleOpenPreview() {
@@ -2044,13 +2181,53 @@ export default function CatalogueBuilderPage() {
                           initialState={draftLinkState}
                           onChange={setDraftLinkState}
                           onOutputChange={setDraftLinkOutput}
-                          liveLinkUrl={draftLiveLinkUrl}
-                          onLiveLinkChange={setDraftLiveLinkUrl}
+                          liveLinkUrl={draftLiveCapturedUrl}
+                          onLiveLinkChange={setDraftLiveCapturedUrl}
                           liveLinkEditable={extensionStatus !== "available"}
                           liveLinkInputRef={liveLinkInputRef}
                           previewUrl={previewUrl}
                           onOpenPreview={handleOpenPreview}
                           onLinkViaPreview={handleLinkViaPreview}
+                          previewExtraControls={
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              <span>
+                                Preview Source: {draftLinkSource === "live" ? "Captured" : "Manual"}
+                              </span>
+                              {draftLinkSource === "live" ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setDraftLinkSource("manual")}
+                                >
+                                  Switch to Manual
+                                </Button>
+                              ) : null}
+                              {draftLinkSource === "manual" && draftLiveCapturedUrl ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setDraftLinkSource("live")}
+                                >
+                                  Switch to Captured
+                                </Button>
+                              ) : null}
+                              {draftLiveCapturedUrl ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setDraftLiveCapturedUrl("")
+                                    setDraftLinkSource("manual")
+                                  }}
+                                >
+                                  Clear captured link
+                                </Button>
+                              ) : null}
+                            </div>
+                          }
                           previewStatusText={
                             extensionStatus === "available"
                               ? "Extension enabled"
@@ -2059,6 +2236,54 @@ export default function CatalogueBuilderPage() {
                           extractedPluFlags={draftExtractedFlags}
                           onExtractedPluFlagsChange={setDraftExtractedFlags}
                         />
+                        <Dialog open={captureDialogOpen} onOpenChange={setCaptureDialogOpen}>
+                          <DialogContent>
+                            <DialogHeader>
+                              <DialogTitle>Apply captured link?</DialogTitle>
+                              <DialogDescription>
+                                This can overwrite current manual link settings to build a dynamic link.
+                              </DialogDescription>
+                            </DialogHeader>
+                            <DialogFooter className="flex flex-wrap justify-end gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => {
+                                  setCaptureDialogOpen(false)
+                                  setPendingCapturedUrl(null)
+                                }}
+                              >
+                                Capture only
+                              </Button>
+                              <Button
+                                type="button"
+                                onClick={() => {
+                                  if (!pendingCapturedUrl) {
+                                    setCaptureDialogOpen(false)
+                                    setPendingCapturedUrl(null)
+                                    return
+                                  }
+                                  const { nextState, didConvert, warnings } =
+                                    convertCapturedUrlToBuilderState(
+                                      pendingCapturedUrl,
+                                      draftLinkState
+                                    )
+                                  if (didConvert) {
+                                    setDraftLinkState(nextState)
+                                    setDraftLinkOutput(buildDynamicOutputFromState(nextState))
+                                    setDraftLinkSource("manual")
+                                  } else {
+                                    toast.warning(warnings[0] ?? "Unable to convert this URL yet.")
+                                  }
+                                  setCaptureDialogOpen(false)
+                                  setPendingCapturedUrl(null)
+                                }}
+                              >
+                                Convert to Dynamic
+                              </Button>
+                            </DialogFooter>
+                          </DialogContent>
+                        </Dialog>
                       </div>
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">

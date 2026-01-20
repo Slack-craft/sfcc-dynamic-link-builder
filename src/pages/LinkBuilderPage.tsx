@@ -1,5 +1,14 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import DynamicLinkBuilder from "@/tools/link-builder/DynamicLinkBuilder"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 import { BRAND_OPTIONS } from "@/data/brands"
 import { extensionRequest } from "@/lib/preview/extensionRequest"
@@ -31,6 +40,12 @@ function extractQueryOnly(input: string) {
 function buildIdFilter(pluValues: string[]) {
   const joined = pluValues.join("%7c")
   return `?prefn1=id&prefv1=${joined}`
+}
+
+function buildPlusArray(values: string[]) {
+  return Array.from({ length: Math.max(20, values.length) }, (_, index) => {
+    return values[index] ?? ""
+  })
 }
 
 function isBrandPath(pathname: string) {
@@ -92,6 +107,8 @@ export default function LinkBuilderPage() {
     captureMode: "path+filters",
   })
   const [liveLinkUrl, setLiveLinkUrl] = useState("")
+  const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
+  const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
   const [extensionStatus, setExtensionStatus] = useState<
     "unknown" | "available" | "unavailable"
@@ -121,10 +138,9 @@ export default function LinkBuilderPage() {
       const msg = event.data
       if (!msg || msg.type !== "SCA_LINK_SESSION_CLOSED") return
       if (!msg.finalUrl) return
-      setLiveLinkUrl(msg.finalUrl)
+      handleCapturedUrl(msg.finalUrl)
       setAwaitingManualLink(false)
       setExtensionStatus("available")
-      applyCapturedUrl(msg.finalUrl)
       toast.success("Live Link captured")
     }
 
@@ -132,52 +148,115 @@ export default function LinkBuilderPage() {
     return () => window.removeEventListener("message", onMessage)
   }, [builderState])
 
-  function applyCapturedUrl(finalUrl: string) {
+  function convertCapturedUrlToBuilderState(
+    finalUrl: string,
+    currentState: LinkBuilderState
+  ) {
     let parsed: URL
     try {
       parsed = new URL(finalUrl)
     } catch {
-      return
+      return { nextState: currentState, didConvert: false, warnings: ["Invalid URL"] }
     }
 
-    const capturedSearch = parsed.search ?? ""
     const pathname = parsed.pathname ?? ""
-    const captureMode = builderState.captureMode ?? "path+filters"
-    const cleanedPLUs = builderState.plus
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0)
-    const hasExtensionText = builderState.extension.trim().length > 0
-    const isSinglePlu = !hasExtensionText && cleanedPLUs.length === 1
-    const isMultiPlu = cleanedPLUs.length > 1
-    const manualBaseMode = !isSinglePlu && !isMultiPlu
+    const capturedSearch = parsed.search ?? ""
+    const params = new URLSearchParams(parsed.search)
 
-    if (!manualBaseMode) return
-
-    const nextState: LinkBuilderState = {
-      ...builderState,
-    }
-
-    if (capturedSearch) {
-      nextState.extension = capturedSearch
-    }
-
-    if (captureMode === "path+filters") {
-      if (isBrandPath(pathname)) {
-        nextState.previewPathOverride = pathname
-        const stub = getBrandStub(pathname)
-        const match = BRAND_OPTIONS.find(
-          (option) => slugifyLabel(option.label) === stub
-        )
-        if (match) {
-          nextState.brand = match
-          nextState.category = null
-        }
-      } else if (pathname === "/catalogue-out-now") {
-        nextState.previewPathOverride = "/catalogue-out-now"
+    const productMatch = pathname.match(/\/p\/[^/]+\/(\d{4,8})\.html/i)
+    if (productMatch) {
+      const plu = productMatch[1]
+      return {
+        nextState: {
+          ...currentState,
+          category: null,
+          brand: null,
+          extension: "",
+          plus: buildPlusArray([plu]),
+          previewPathOverride: "",
+        },
+        didConvert: true,
+        warnings: [],
       }
     }
 
-    setBuilderState(nextState)
+    const prefn1 = params.get("prefn1")
+    const prefv1 = params.get("prefv1")
+    if (prefn1?.toLowerCase() === "id" && prefv1) {
+      const parsedPlus = prefv1
+        .split("|")
+        .map((value) => value.trim())
+        .filter(Boolean)
+      if (parsedPlus.length > 0) {
+        const baseState =
+          currentState.category || currentState.brand
+            ? currentState
+            : { ...currentState, category: { label: "Catalog", value: "catalogue-onsale" } }
+        return {
+          nextState: {
+            ...baseState,
+            extension: "",
+            plus: buildPlusArray(parsedPlus),
+            previewPathOverride: "",
+          },
+          didConvert: true,
+          warnings: [],
+        }
+      }
+    }
+
+    if (pathname === "/catalogue-out-now") {
+      return {
+        nextState: {
+          ...currentState,
+          category: { label: "Catalog", value: "catalogue-onsale" },
+          brand: null,
+          extension: capturedSearch,
+          plus: buildPlusArray([]),
+          previewPathOverride: "/catalogue-out-now",
+        },
+        didConvert: true,
+        warnings: [],
+      }
+    }
+
+    if (isBrandPath(pathname)) {
+      const stub = getBrandStub(pathname)
+      const match = BRAND_OPTIONS.find(
+        (option) => slugifyLabel(option.label) === stub
+      )
+      if (!match) {
+        return {
+          nextState: currentState,
+          didConvert: false,
+          warnings: ["Unable to map brand from captured URL."],
+        }
+      }
+      return {
+        nextState: {
+          ...currentState,
+          brand: match,
+          category: null,
+          extension: capturedSearch,
+          plus: buildPlusArray([]),
+          previewPathOverride: pathname,
+        },
+        didConvert: true,
+        warnings: [],
+      }
+    }
+
+    return {
+      nextState: currentState,
+      didConvert: false,
+      warnings: ["Unable to convert this URL to a dynamic link yet."],
+    }
+  }
+
+  function handleCapturedUrl(finalUrl: string) {
+    setLiveLinkUrl(finalUrl)
+    setPendingCapturedUrl(finalUrl)
+    setCaptureDialogOpen(true)
   }
 
   useEffect(() => {
@@ -199,9 +278,8 @@ export default function LinkBuilderPage() {
           trimmed.startsWith("https://staging.supercheapauto.com.au/") ||
           trimmed.startsWith("https://staging.supercheapauto.co.nz/")
         if (isAllowed) {
-          setLiveLinkUrl(trimmed)
+          handleCapturedUrl(trimmed)
           setAwaitingManualLink(false)
-          applyCapturedUrl(trimmed)
           toast.success("Live Link pasted")
           return
         }
@@ -259,21 +337,66 @@ export default function LinkBuilderPage() {
   }, [extensionStatus, previewUrl])
 
   return (
-    <DynamicLinkBuilder
-      initialState={builderState}
-      onChange={setBuilderState}
-      liveLinkUrl={liveLinkUrl}
-      onLiveLinkChange={setLiveLinkUrl}
-      liveLinkEditable={extensionStatus !== "available"}
-      liveLinkInputRef={liveLinkInputRef}
-      previewUrl={previewUrl}
-      onOpenPreview={handleOpenPreview}
-      onLinkViaPreview={handleLinkViaPreview}
-      previewStatusText={
-        extensionStatus === "available"
-          ? "Extension enabled"
-          : "Extension not installed - manual paste required"
-      }
-    />
+    <>
+      <DynamicLinkBuilder
+        initialState={builderState}
+        onChange={setBuilderState}
+        liveLinkUrl={liveLinkUrl}
+        onLiveLinkChange={setLiveLinkUrl}
+        liveLinkEditable={extensionStatus !== "available"}
+        liveLinkInputRef={liveLinkInputRef}
+        previewUrl={previewUrl}
+        onOpenPreview={handleOpenPreview}
+        onLinkViaPreview={handleLinkViaPreview}
+        previewStatusText={
+          extensionStatus === "available"
+            ? "Extension enabled"
+            : "Extension not installed - manual paste required"
+        }
+      />
+      <Dialog open={captureDialogOpen} onOpenChange={setCaptureDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apply captured link?</DialogTitle>
+            <DialogDescription>
+              This can overwrite current manual link settings to build a dynamic link.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCaptureDialogOpen(false)
+                setPendingCapturedUrl(null)
+              }}
+            >
+              Capture only
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!pendingCapturedUrl) {
+                  setCaptureDialogOpen(false)
+                  setPendingCapturedUrl(null)
+                  return
+                }
+                const { nextState, didConvert, warnings } =
+                  convertCapturedUrlToBuilderState(pendingCapturedUrl, builderState)
+                if (didConvert) {
+                  setBuilderState(nextState)
+                } else {
+                  toast.warning(warnings[0] ?? "Unable to convert this URL yet.")
+                }
+                setCaptureDialogOpen(false)
+                setPendingCapturedUrl(null)
+              }}
+            >
+              Convert to Dynamic
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

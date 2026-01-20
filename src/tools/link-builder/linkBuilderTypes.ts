@@ -8,4 +8,6 @@ export type LinkBuilderState = {
   brand: LinkBuilderOption | null
   extension: string
   plus: string[]
+  previewPathOverride?: string
+  captureMode?: "path+filters" | "filters-only"
 }

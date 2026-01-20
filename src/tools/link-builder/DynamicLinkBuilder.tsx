@@ -45,6 +45,8 @@ type SavedLink = {
   brand: LinkBuilderOption | null
   extension: string
   plus: string[] // length 20
+  previewPathOverride?: string
+  captureMode?: LinkBuilderState["captureMode"]
 }
 
 const HISTORY_STORAGE_KEY = "sca_dynamic_link_builder_history_v1"
@@ -71,6 +73,8 @@ function normalizeState(state?: Partial<LinkBuilderState>): LinkBuilderState {
     brand: state?.brand ?? null,
     extension: state?.extension ?? "",
     plus: Array.from({ length: baseLength }, (_, i) => state?.plus?.[i] ?? ""),
+    previewPathOverride: state?.previewPathOverride ?? "",
+    captureMode: state?.captureMode ?? "path+filters",
   }
 }
 
@@ -82,6 +86,8 @@ function statesEqual(a: LinkBuilderState, b: LinkBuilderState) {
   if (!optionEquals(a.category, b.category)) return false
   if (!optionEquals(a.brand, b.brand)) return false
   if (a.extension !== b.extension) return false
+  if ((a.previewPathOverride ?? "") !== (b.previewPathOverride ?? "")) return false
+  if ((a.captureMode ?? "path+filters") !== (b.captureMode ?? "path+filters")) return false
   if (a.plus.length !== b.plus.length) return false
   for (let i = 0; i < a.plus.length; i += 1) {
     if (a.plus[i] !== b.plus[i]) return false
@@ -293,6 +299,7 @@ type DynamicLinkBuilderProps = {
   onLiveLinkChange?: (value: string) => void
   liveLinkEditable?: boolean
   liveLinkInputRef?: React.RefObject<HTMLInputElement | null>
+  previewUrl?: string
   onOpenPreview?: () => void
   onLinkViaPreview?: () => void
   previewStatusText?: string
@@ -317,6 +324,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       onLiveLinkChange,
       liveLinkEditable = false,
       liveLinkInputRef,
+      previewUrl,
       onOpenPreview,
       onLinkViaPreview,
       previewStatusText,
@@ -388,6 +396,12 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   const [plus, setPlus] = useState<string[]>(normalizedInitial.plus)
   const [pluDrafts, setPluDrafts] = useState<string[]>(normalizedInitial.plus)
   const activePluIndexRef = useRef<number | null>(null)
+  const [previewPathOverride, setPreviewPathOverride] = useState(
+    normalizedInitial.previewPathOverride ?? ""
+  )
+  const [captureMode, setCaptureMode] = useState<LinkBuilderState["captureMode"]>(
+    normalizedInitial.captureMode ?? "path+filters"
+  )
 
   // History
   const [savedLinks, setSavedLinks] = useState<SavedLink[]>(() =>
@@ -423,6 +437,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     setExtension(normalized.extension)
     setPlus(normalized.plus)
     setPluDrafts(normalized.plus)
+    setPreviewPathOverride(normalized.previewPathOverride ?? "")
+    setCaptureMode(normalized.captureMode ?? "path+filters")
   }, [initialState])
 
   useEffect(() => {
@@ -562,18 +578,34 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     setPlus(nextPlus)
     setPluDrafts(nextPlus)
     updateExtractedFlags((flags) => flags.map(() => false))
-    commitState({ category, brand, extension, plus: nextPlus })
+    commitState({
+      category,
+      brand,
+      extension,
+      plus: nextPlus,
+      previewPathOverride,
+      captureMode,
+    })
   }
 
   function clearExtension() {
     setExtension("")
-    commitState({ category, brand, extension: "", plus })
+    commitState({
+      category,
+      brand,
+      extension: "",
+      plus,
+      previewPathOverride,
+      captureMode,
+    })
   }
 
   function resetBuilder() {
     setCategory(null)
     setBrand(null)
     setExtension("")
+    setPreviewPathOverride("")
+    setCaptureMode("path+filters")
     clearPLUs()
 
     // focus Category after state updates
@@ -617,6 +649,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       brand,
       extension,
       plus: nextPlus,
+      previewPathOverride,
+      captureMode,
     })
   }
 
@@ -633,6 +667,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     setCategory(restoredCategory)
     setBrand(restoredBrand)
     setExtension(item.extension ?? "")
+    setPreviewPathOverride(item.previewPathOverride ?? "")
+    setCaptureMode(item.captureMode ?? "path+filters")
     const baseLength = Math.max(20, item.plus?.length ?? 0)
     setPlus(Array.from({ length: baseLength }, (_, i) => item.plus?.[i] ?? ""))
     setPluDrafts(Array.from({ length: baseLength }, (_, i) => item.plus?.[i] ?? ""))
@@ -641,6 +677,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       brand: restoredBrand,
       extension: item.extension ?? "",
       plus: Array.from({ length: baseLength }, (_, i) => item.plus?.[i] ?? ""),
+      previewPathOverride: item.previewPathOverride ?? "",
+      captureMode: item.captureMode ?? "path+filters",
     })
 
     toast.success("Restored saved link parameters")
@@ -730,6 +768,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       brand,
       extension,
       plus: committedPlus,
+      previewPathOverride,
+      captureMode,
     }
     setPlus(committedPlus)
     setPluDrafts(committedPlus)
@@ -856,6 +896,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                       brand: null,
                       extension,
                       plus,
+                      previewPathOverride,
+                      captureMode,
                     })
                   }}
                 >
@@ -877,6 +919,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                       brand: nextBrand,
                       extension,
                       plus,
+                      previewPathOverride,
+                      captureMode,
                     })
                   }}
                   disabled={categoryDisabled}
@@ -898,6 +942,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                       brand: opt,
                       extension,
                       plus,
+                      previewPathOverride,
+                      captureMode,
                     })
                   }}
                   disabled={brandDisabled}
@@ -935,14 +981,20 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                   ref={extensionRef}
                   value={extension}
                   onChange={(e) => setExtension(e.target.value)}
-                  onBlur={() =>
+                  onBlur={() => {
+                    const normalizedExtension = extractQueryString(extension) || extension
+                    if (normalizedExtension !== extension) {
+                      setExtension(normalizedExtension)
+                    }
                     commitState({
                       category,
                       brand,
-                      extension,
+                      extension: normalizedExtension,
                       plus,
+                      previewPathOverride,
+                      captureMode,
                     })
-                  }
+                  }}
                   placeholder={
                     extensionDisabled
                       ? "Disabled by selection rules."
@@ -1025,6 +1077,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                               brand,
                               extension,
                               plus: nextPlus,
+                              previewPathOverride,
+                              captureMode,
                             })
                           }}
                           onPaste={(e) => {
@@ -1089,11 +1143,41 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
               <Label>Live Link (from Preview)</Label>
               <Input
                 ref={liveLinkInputRef}
-                value={liveLinkUrl ?? ""}
+                value={liveLinkUrl || previewUrl || ""}
+                onFocus={() => {
+                  if (liveLinkEditable && !liveLinkUrl && previewUrl) {
+                    onLiveLinkChange?.("")
+                  }
+                }}
                 onChange={(event) => onLiveLinkChange?.(event.target.value)}
                 placeholder="Captured from Preview window"
                 readOnly={!liveLinkEditable}
               />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Label className="text-xs text-muted-foreground">Capture mode</Label>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                value={captureMode}
+                onChange={(event) => {
+                  const nextMode =
+                    event.target.value === "filters-only"
+                      ? "filters-only"
+                      : "path+filters"
+                  setCaptureMode(nextMode)
+                  commitState({
+                    category,
+                    brand,
+                    extension,
+                    plus,
+                    previewPathOverride,
+                    captureMode: nextMode,
+                  })
+                }}
+              >
+                <option value="path+filters">Capture path + filters</option>
+                <option value="filters-only">Capture filters only</option>
+              </select>
             </div>
             <Label>Generated dynamic link</Label>
             <Textarea value={output} readOnly className="min-h-[180px]" />

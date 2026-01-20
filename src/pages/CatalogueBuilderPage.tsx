@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+﻿import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -47,7 +47,6 @@ import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
 import { extractTextFromRect, loadPdfDocument, type PdfRect } from "@/tools/catalogue-builder/pdfTextExtract"
 import { parseOfferText } from "@/lib/extraction/parseOfferText"
 import { extractPlusFromPdfText } from "@/lib/extraction/pluUtils"
-import { buildPreviewUrl } from "@/lib/preview/buildPreviewUrl"
 import { clearObjectUrlCache, getObjectUrl } from "@/lib/images/objectUrlCache"
 import { extensionRequest } from "@/lib/preview/extensionRequest"
 import { hasExtensionPing } from "@/lib/preview/hasExtension"
@@ -133,7 +132,7 @@ const TileCard = memo(function TileCard({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {`Spread ${tile.mappedSpreadNumber} → ${tile.mappedPdfFilename ?? "PDF"} → ${tile.mappedHalf ?? "?"} → box ${tile.mappedBoxIndex ?? "?"}`}
+                  {`Spread ${tile.mappedSpreadNumber} - ${tile.mappedPdfFilename ?? "PDF"} - ${tile.mappedHalf ?? "?"} - box ${tile.mappedBoxIndex ?? "?"}`}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -145,7 +144,7 @@ const TileCard = memo(function TileCard({
       </div>
       {tile.title ? (
         <div className="mt-1 text-xs text-muted-foreground">
-          {tile.title.length > 80 ? `${tile.title.slice(0, 80)}…` : tile.title}
+          {tile.title.length > 80 ? `${tile.title.slice(0, 80)}...` : tile.title}
         </div>
       ) : null}
     </button>
@@ -246,6 +245,116 @@ function formatMappingInfo(fileName: string) {
   return `p${pageLabel} box${boxLabel}`
 }
 
+function slugifyLabel(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[’']/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+}
+
+function extractQueryOnly(input: string) {
+  const trimmed = input.trim()
+  if (!trimmed) return ""
+  if (trimmed.startsWith("?")) return trimmed
+  try {
+    const parsed = new URL(trimmed)
+    return parsed.search || ""
+  } catch {
+    const index = trimmed.indexOf("?")
+    return index >= 0 ? trimmed.slice(index) : ""
+  }
+}
+
+function buildIdFilter(pluValues: string[]) {
+  const joined = pluValues.join("%7c")
+  return `?prefn1=id&prefv1=${joined}`
+}
+
+function isBrandPath(pathname: string) {
+  return /^\/brands\/[^/]+$/i.test(pathname)
+}
+
+function getBrandStub(pathname: string) {
+  const match = pathname.match(/^\/brands\/([^/]+)/i)
+  return match?.[1] ?? ""
+}
+
+function buildDynamicOutputFromState(state: LinkBuilderState) {
+  const hasExtensionText = state.extension.trim().length > 0
+  const extensionQuery = extractQueryOnly(state.extension)
+  const extensionValid = !hasExtensionText || extensionQuery.length > 0
+  const cleanedPLUs = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
+
+  if (hasExtensionText && !extensionValid) {
+    return "Extension is not valid (missing '?'). Paste a URL that includes a query string, or paste query params only."
+  }
+
+  if (!hasExtensionText && cleanedPLUs.length === 1) {
+    return `$Url('Product-Show','pid','${cleanedPLUs[0]}')$`
+  }
+
+  const baseValue = state.category?.value ?? state.brand?.value ?? ""
+  if (!baseValue) {
+    if (cleanedPLUs.length > 1 || hasExtensionText) {
+      return "Select a Category or Brand to generate the base link."
+    }
+    return "Select a Category or Brand, or enter one PLU to generate a Product link."
+  }
+
+  let built = `$Url('Search-Show','cgid','${baseValue}')$`
+  if (extensionQuery) {
+    built += extensionQuery
+    return built
+  }
+  if (cleanedPLUs.length > 1) {
+    built += buildIdFilter(cleanedPLUs)
+    return built
+  }
+  return built
+}
+
+function buildPreviewUrlFromState(state: LinkBuilderState, scope?: Region) {
+  const domain =
+    scope === "NZ"
+      ? "https://staging.supercheapauto.co.nz"
+      : "https://staging.supercheapauto.com.au"
+
+  const extensionQuery = extractQueryOnly(state.extension)
+  const cleanedPLUs = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
+  const hasExtensionText = state.extension.trim().length > 0
+  const isSinglePlu = !hasExtensionText && cleanedPLUs.length === 1
+  const isMultiPlu = cleanedPLUs.length > 1
+
+  if (isSinglePlu) {
+    return `${domain}/p/sca-product/${cleanedPLUs[0]}.html`
+  }
+
+  if (isMultiPlu) {
+    return `${domain}/${buildIdFilter(cleanedPLUs)}`
+  }
+
+  const previewPathOverride = state.previewPathOverride ?? ""
+  let derivedPath = previewPathOverride
+  if (!derivedPath && state.brand) {
+    derivedPath = `/brands/${slugifyLabel(state.brand.label)}`
+  }
+  if (!derivedPath && state.category?.value === "catalogue-onsale") {
+    derivedPath = "/catalogue-out-now"
+  }
+
+  if (derivedPath) {
+    return `${domain}${derivedPath}${extensionQuery}`
+  }
+
+  if (extensionQuery) {
+    return `${domain}${extensionQuery}`
+  }
+
+  return domain
+}
+
 function getExportSpreadOrder(entries: PdfExportEntry[]) {
   const withParsed = entries.map((entry, index) => {
     const match = entry.filename?.match(/P(\d{1,2})/i)
@@ -291,10 +400,12 @@ function findRectById(entries: PdfExportEntry[], rectId: string) {
 
 function createEmptyLinkBuilderState(): LinkBuilderState {
   return {
-    category: null,
+    category: { label: "Catalog", value: "catalogue-onsale" },
     brand: null,
     extension: "",
     plus: Array.from({ length: MAX_PLUS_FIELDS }, () => ""),
+    previewPathOverride: "",
+    captureMode: "path+filters",
   }
 }
 
@@ -628,7 +739,10 @@ export default function CatalogueBuilderPage() {
     () => tiles.find((tile) => tile.id === selectedTileId) ?? null,
     [tiles, selectedTileId]
   )
-  const previewUrl = buildPreviewUrl(draftLinkOutput, project?.region)
+  const previewUrl = useMemo(
+    () => buildPreviewUrlFromState(draftLinkState, project?.region),
+    [draftLinkState, project?.region]
+  )
 
   function setProjectStage(nextStage: ProjectStage) {
     if (!project) return
@@ -951,6 +1065,7 @@ export default function CatalogueBuilderPage() {
       setDraftLiveLinkUrl(msg.finalUrl)
       setAwaitingManualLink(false)
       setExtensionStatus("available")
+      applyCapturedUrl(msg.finalUrl)
       toast.success("Live Link captured")
     }
 
@@ -999,6 +1114,7 @@ export default function CatalogueBuilderPage() {
         if (isAllowed) {
           setDraftLiveLinkUrl(trimmed)
           setAwaitingManualLink(false)
+          applyCapturedUrl(trimmed)
           toast.success("Live Link pasted")
           return
         }
@@ -1017,6 +1133,55 @@ export default function CatalogueBuilderPage() {
     }
   }, [awaitingManualLink])
 
+  function applyCapturedUrl(finalUrl: string) {
+    let parsed: URL
+    try {
+      parsed = new URL(finalUrl)
+    } catch {
+      return
+    }
+
+    const capturedSearch = parsed.search ?? ""
+    const pathname = parsed.pathname ?? ""
+    const captureMode = draftLinkState.captureMode ?? "path+filters"
+    const cleanedPLUs = draftLinkState.plus
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0)
+    const hasExtensionText = draftLinkState.extension.trim().length > 0
+    const isSinglePlu = !hasExtensionText && cleanedPLUs.length === 1
+    const isMultiPlu = cleanedPLUs.length > 1
+    const manualBaseMode = !isSinglePlu && !isMultiPlu
+
+    if (!manualBaseMode) return
+
+    const nextState: LinkBuilderState = {
+      ...draftLinkState,
+    }
+
+    if (capturedSearch) {
+      nextState.extension = capturedSearch
+    }
+
+    if (captureMode === "path+filters") {
+      if (isBrandPath(pathname)) {
+        nextState.previewPathOverride = pathname
+        const stub = getBrandStub(pathname)
+        const match = BRAND_OPTIONS.find(
+          (option) => slugifyLabel(option.label) === stub
+        )
+        if (match) {
+          nextState.brand = match
+          nextState.category = null
+        }
+      } else if (pathname === "/catalogue-out-now") {
+        nextState.previewPathOverride = "/catalogue-out-now"
+      }
+    }
+
+    setDraftLinkState(nextState)
+    setDraftLinkOutput(buildDynamicOutputFromState(nextState))
+  }
+
   async function handleOpenPreview() {
     const url = previewUrl
     if (!url) return
@@ -1024,7 +1189,7 @@ export default function CatalogueBuilderPage() {
       window.open(url, "scaPreview", "popup,width=1200,height=800")
       return
     }
-    toast.info("Opening preview…")
+    toast.info("Opening preview...")
     try {
       await extensionRequest("SCA_OPEN_PREVIEW_WINDOW", { url }, 600)
       setExtensionStatus("available")
@@ -1047,7 +1212,7 @@ export default function CatalogueBuilderPage() {
       startManualFallback()
       return
     }
-    toast.info("Opening preview… Close the window to capture Live Link.")
+    toast.info("Opening preview... Close the window to capture Live Link.")
     try {
       await extensionRequest("SCA_OPEN_LINK_VIA_PREVIEW", { url }, 600)
       setExtensionStatus("available")
@@ -1824,10 +1989,10 @@ export default function CatalogueBuilderPage() {
                                   />
                                   <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                                     <span>
-                                      Brand: {selectedTile.offer?.brand?.label ?? "—"}
+                                      Brand: {selectedTile.offer?.brand?.label ?? "-"}
                                     </span>
                                     <span>
-                                      % Off: {selectedTile.offer?.percentOff?.raw ?? "—"}
+                                      % Off: {selectedTile.offer?.percentOff?.raw ?? "-"}
                                     </span>
                                   </div>
                                 </div>
@@ -1883,12 +2048,13 @@ export default function CatalogueBuilderPage() {
                           onLiveLinkChange={setDraftLiveLinkUrl}
                           liveLinkEditable={extensionStatus !== "available"}
                           liveLinkInputRef={liveLinkInputRef}
+                          previewUrl={previewUrl}
                           onOpenPreview={handleOpenPreview}
                           onLinkViaPreview={handleLinkViaPreview}
                           previewStatusText={
                             extensionStatus === "available"
                               ? "Extension enabled"
-                              : "Extension not installed — manual paste required"
+                              : "Extension not installed - manual paste required"
                           }
                           extractedPluFlags={draftExtractedFlags}
                           onExtractedPluFlagsChange={setDraftExtractedFlags}
@@ -1922,15 +2088,15 @@ export default function CatalogueBuilderPage() {
                           <div className="space-y-1">
                             <div>
                               <span className="font-medium">Title:</span>{" "}
-                              {selectedTile.offer?.title ?? "—"}
+                              {selectedTile.offer?.title ?? "-"}
                             </div>
                             <div>
                               <span className="font-medium">Brand:</span>{" "}
-                              {selectedTile.offer?.brand?.label ?? "—"}
+                              {selectedTile.offer?.brand?.label ?? "-"}
                             </div>
                             <div>
                               <span className="font-medium">Details:</span>{" "}
-                              {selectedTile.offer?.productDetails ?? "—"}
+                              {selectedTile.offer?.productDetails ?? "-"}
                             </div>
                           </div>
                         </div>
@@ -1954,7 +2120,7 @@ export default function CatalogueBuilderPage() {
                             Offer updated:{" "}
                             {selectedTile.offerUpdatedAt
                               ? new Date(selectedTile.offerUpdatedAt).toLocaleString()
-                              : "—"}
+                              : "-"}
                           </div>
                           {selectedTile.extractedText ||
                           selectedTile.offer?.source?.rawText ? (
@@ -2006,5 +2172,8 @@ export default function CatalogueBuilderPage() {
     </div>
   )
 }
+
+
+
 
 

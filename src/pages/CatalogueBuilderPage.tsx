@@ -483,6 +483,7 @@ export default function CatalogueBuilderPage() {
   )
   const [draftFacetBrands, setDraftFacetBrands] = useState<string[]>([])
   const [draftFacetArticleTypes, setDraftFacetArticleTypes] = useState<string[]>([])
+  const [draftFacetExcludedPluIds, setDraftFacetExcludedPluIds] = useState<string[]>([])
   const [tileThumbUrls, setTileThumbUrls] = useState<Record<string, string>>({})
   const [selectedColorUrl, setSelectedColorUrl] = useState<string | null>(null)
   const [pdfExtractRunning, setPdfExtractRunning] = useState(false)
@@ -933,6 +934,7 @@ export default function CatalogueBuilderPage() {
       setDraftExtractedFlags(createEmptyExtractedFlags())
       setDraftFacetBrands([])
       setDraftFacetArticleTypes([])
+      setDraftFacetExcludedPluIds([])
       return
     }
     setDraftTitle(selectedTile.title ?? "")
@@ -946,6 +948,7 @@ export default function CatalogueBuilderPage() {
     setDraftLinkSource(selectedTile.linkSource ?? "manual")
     setDraftFacetBrands(selectedTile.facetBuilder?.selectedBrands ?? [])
     setDraftFacetArticleTypes(selectedTile.facetBuilder?.selectedArticleTypes ?? [])
+    setDraftFacetExcludedPluIds(selectedTile.facetBuilder?.excludedPluIds ?? [])
   }, [selectedTile])
 
   useEffect(() => {
@@ -1038,6 +1041,7 @@ export default function CatalogueBuilderPage() {
           facetBuilder: {
             selectedBrands: [],
             selectedArticleTypes: [],
+            excludedPluIds: [],
           },
           linkSource: "manual",
           liveCapturedUrl: undefined,
@@ -1199,6 +1203,7 @@ export default function CatalogueBuilderPage() {
       facetBuilder: {
         selectedBrands: draftFacetBrands,
         selectedArticleTypes: draftFacetArticleTypes,
+        excludedPluIds: draftFacetExcludedPluIds,
       },
     })
     upsertProject(updated)
@@ -1228,6 +1233,7 @@ export default function CatalogueBuilderPage() {
     draftExtractedFlags,
     draftFacetBrands,
     draftFacetArticleTypes,
+    draftFacetExcludedPluIds,
     draftLiveCapturedUrl,
     draftLinkSource,
     project,
@@ -2375,6 +2381,8 @@ export default function CatalogueBuilderPage() {
                           facetSelectedArticleTypes={draftFacetArticleTypes}
                           onFacetSelectedBrandsChange={setDraftFacetBrands}
                           onFacetSelectedArticleTypesChange={setDraftFacetArticleTypes}
+                          facetExcludedPluIds={draftFacetExcludedPluIds}
+                          onFacetExcludedPluIdsChange={setDraftFacetExcludedPluIds}
                           detectedBrands={detectedBrands}
                           liveLinkUrl={draftLiveCapturedUrl}
                           onLiveLinkChange={setDraftLiveCapturedUrl}

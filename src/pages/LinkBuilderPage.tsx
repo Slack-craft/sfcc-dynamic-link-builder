@@ -108,6 +108,7 @@ export default function LinkBuilderPage() {
   })
   const [facetSelectedBrands, setFacetSelectedBrands] = useState<string[]>([])
   const [facetSelectedArticleTypes, setFacetSelectedArticleTypes] = useState<string[]>([])
+  const [facetExcludedPluIds, setFacetExcludedPluIds] = useState<string[]>([])
   const [liveLinkUrl, setLiveLinkUrl] = useState("")
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
   const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
@@ -349,6 +350,8 @@ export default function LinkBuilderPage() {
       facetSelectedArticleTypes={facetSelectedArticleTypes}
       onFacetSelectedBrandsChange={setFacetSelectedBrands}
       onFacetSelectedArticleTypesChange={setFacetSelectedArticleTypes}
+      facetExcludedPluIds={facetExcludedPluIds}
+      onFacetExcludedPluIdsChange={setFacetExcludedPluIds}
       detectedBrands={[]}
       liveLinkUrl={liveLinkUrl}
       onLiveLinkChange={setLiveLinkUrl}

@@ -30,6 +30,7 @@ export type Tile = {
   facetBuilder?: {
     selectedBrands: string[]
     selectedArticleTypes: string[]
+    excludedPluIds?: string[]
   }
   linkSource?: "manual" | "live"
   liveCapturedUrl?: string | null

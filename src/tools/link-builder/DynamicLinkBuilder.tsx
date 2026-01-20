@@ -12,7 +12,7 @@ import type { LinkBuilderOption, LinkBuilderState } from "@/tools/link-builder/l
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { toast } from "sonner"
-import { FacetBuilderCard, type FacetDataset } from "@/components/facet-builder/facet-builder-card"
+import { FacetBuilderCard, FacetMatchesCard, type FacetDataset } from "@/components/facet-builder/facet-builder-card"
 
 const CATEGORY_OPTIONS: LinkBuilderOption[] = [
   { label: "Catalog", value: "catalogue-onsale" },
@@ -303,6 +303,8 @@ type DynamicLinkBuilderProps = {
   facetSelectedArticleTypes?: string[]
   onFacetSelectedBrandsChange?: (next: string[]) => void
   onFacetSelectedArticleTypesChange?: (next: string[]) => void
+  facetExcludedPluIds?: string[]
+  onFacetExcludedPluIdsChange?: (next: string[]) => void
   detectedBrands?: string[]
   liveLinkUrl?: string
   onLiveLinkChange?: (value: string) => void
@@ -337,6 +339,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       facetSelectedArticleTypes,
       onFacetSelectedBrandsChange,
       onFacetSelectedArticleTypesChange,
+      facetExcludedPluIds,
+      onFacetExcludedPluIdsChange,
       detectedBrands,
       liveLinkUrl,
       onLiveLinkChange,
@@ -558,6 +562,23 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   function commitState(nextState: LinkBuilderState) {
     onChange?.(nextState)
     onOutputChange?.(buildOutputFromState(nextState))
+  }
+
+  function convertToPluLink(pluIds: string[]) {
+    const normalized = pluIds.map((value) => value.trim()).filter(Boolean)
+    const baseLength = Math.max(20, normalized.length)
+    const nextPlus = Array.from({ length: baseLength }, (_, i) => normalized[i] ?? "")
+    setPlus(nextPlus)
+    setPluDrafts(nextPlus)
+    setExtension("")
+    commitState({
+      category,
+      brand,
+      extension: "",
+      plus: nextPlus,
+      previewPathOverride,
+      captureMode,
+    })
   }
 
   function updateExtractedFlags(
@@ -1158,6 +1179,15 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
               captureMode,
             })
           }}
+        />
+        <FacetMatchesCard
+          scope={scope}
+          dataset={dataset}
+          selectedBrands={facetSelectedBrands}
+          selectedArticleTypes={facetSelectedArticleTypes}
+          excludedPluIds={facetExcludedPluIds}
+          onExcludedPluIdsChange={onFacetExcludedPluIdsChange}
+          onConvertToPlu={convertToPluLink}
         />
 
         {/* Output */}

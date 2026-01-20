@@ -181,21 +181,39 @@ export function FacetBuilderCard({
         <div className="space-y-2">
           <Label>Brand</Label>
           <div className="space-y-2">
-            {matchedBrandValues.length > 0 ? (
+            {detectedBrands.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">Detected Brands</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {matchedBrandValues.map((brand) => (
-                    <label key={brand} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={selectedBrands.includes(brand)}
-                        onChange={() => toggleSelection(brand, selectedBrands, setSelectedBrands)}
-                      />
-                      <span>{brand}</span>
-                    </label>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {detectedBrands.map((brand) => (
+                    <span
+                      key={brand}
+                      className="rounded-full border border-muted-foreground/40 px-2 py-0.5 text-muted-foreground"
+                    >
+                      {brand}
+                    </span>
                   ))}
                 </div>
+                {matchedBrandValues.length > 0 ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {matchedBrandValues.map((brand) => (
+                      <label key={brand} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={selectedBrands.includes(brand)}
+                          onChange={() =>
+                            toggleSelection(brand, selectedBrands, setSelectedBrands)
+                          }
+                        />
+                        <span>{brand}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No brand match found in dataset.
+                  </p>
+                )}
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">

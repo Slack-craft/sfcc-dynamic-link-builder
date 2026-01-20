@@ -516,6 +516,17 @@ export default function CatalogueBuilderPage() {
     )
   }, [projectsState])
 
+  const datasetBrandOptions = useMemo(() => {
+    if (!datasetMeta) return BRAND_OPTIONS
+    const values = new Set<string>()
+    datasetRowsRef.current.forEach((row) => {
+      const value = row.brand?.trim()
+      if (value) values.add(value)
+    })
+    if (values.size === 0) return BRAND_OPTIONS
+    return Array.from(values).map((value) => ({ label: value, value }))
+  }, [datasetMeta?.version])
+
   function persistProjectsState(
     updater: (prev: typeof projectsState) => typeof projectsState
   ) {
@@ -816,9 +827,14 @@ export default function CatalogueBuilderPage() {
     [tiles, selectedTileId]
   )
   const detectedBrands = useMemo(() => {
-    if (!selectedTile?.offer?.brand?.label) return []
-    return [selectedTile.offer.brand.label]
-  }, [selectedTile?.offer?.brand?.label])
+    if (selectedTile?.offer?.detectedBrands?.length) {
+      return selectedTile.offer.detectedBrands
+    }
+    if (selectedTile?.offer?.brand?.label) {
+      return [selectedTile.offer.brand.label]
+    }
+    return []
+  }, [selectedTile?.offer?.brand?.label, selectedTile?.offer?.detectedBrands])
   const manualPreviewUrl = useMemo(
     () => buildPreviewUrlFromState(draftLinkState, project?.region),
     [draftLinkState, project?.region]
@@ -1513,7 +1529,7 @@ export default function CatalogueBuilderPage() {
       toast.error("No extracted text available for this tile.")
       return
     }
-    const offer = parseOfferText(selectedTile.extractedText, BRAND_OPTIONS)
+    const offer = parseOfferText(selectedTile.extractedText, datasetBrandOptions)
     const shouldSetTitle = !selectedTile.title || !selectedTile.titleEditedManually
     const nextTitle = shouldSetTitle ? offer.title ?? selectedTile.title : selectedTile.title
     const updated = updateTile(project, selectedTile.id, {
@@ -1586,7 +1602,7 @@ export default function CatalogueBuilderPage() {
 
     try {
       const buildOfferUpdate = (tile: Tile, text: string) => {
-        const offer = parseOfferText(text, BRAND_OPTIONS)
+        const offer = parseOfferText(text, datasetBrandOptions)
         const shouldSetTitle = !tile.title || !tile.titleEditedManually
         const nextTitle = shouldSetTitle ? offer.title ?? tile.title : tile.title
         return {

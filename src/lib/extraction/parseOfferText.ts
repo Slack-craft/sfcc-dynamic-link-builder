@@ -2,6 +2,7 @@ import type { OfferExtraction } from "@/types/offer"
 import { stripPluTokensFromText } from "@/lib/extraction/pluUtils"
 
 type BrandOption = { label: string; value: string }
+const SHORT_BRAND_ALLOWLIST = new Set(["SCA"])
 
 function normalizeText(value: string) {
   return value
@@ -89,6 +90,67 @@ function findBrand(candidateText: string, brands: BrandOption[]) {
   return { label: best.label, matchedFrom: best.matchedFrom, score: best.score }
 }
 
+function detectBrandsFromText(text: string, brands: BrandOption[]) {
+  const textNorm = norm(text)
+  if (!textNorm) return []
+
+  const matches: Array<{ label: string; score: number; length: number }> = []
+  brands.forEach((brand) => {
+    const label = brand.label?.trim()
+    if (!label) return
+    const labelNorm = norm(label)
+    if (!labelNorm) return
+    const tokens = labelNorm.split(" ").filter(Boolean)
+    if (tokens.length === 0) return
+
+    let score = 0
+    if (tokens.length === 1) {
+      const token = tokens[0]
+      if (token.length <= 3 && !SHORT_BRAND_ALLOWLIST.has(label.toUpperCase())) {
+        return
+      }
+      const regex = new RegExp(`\\b${token}\\b`, "i")
+      if (regex.test(textNorm)) {
+        score = 1
+      }
+    } else {
+      const phrase = tokens.join("\\s+")
+      const regex = new RegExp(`\\b${phrase}\\b`, "i")
+      if (regex.test(textNorm)) {
+        score = 1
+      } else {
+        const firstToken = tokens[0]
+        if (firstToken.length >= 5) {
+          const firstRegex = new RegExp(`\\b${firstToken}\\b`, "i")
+          if (firstRegex.test(textNorm)) {
+            score = 0.6
+          }
+        }
+      }
+    }
+
+    if (score > 0) {
+      matches.push({ label, score, length: labelNorm.length })
+    }
+  })
+
+  matches.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    return b.length - a.length
+  })
+
+  const unique = new Set<string>()
+  const results: string[] = []
+  for (const match of matches) {
+    if (unique.has(match.label)) continue
+    unique.add(match.label)
+    results.push(match.label)
+    if (results.length >= 5) break
+  }
+
+  return results
+}
+
 function removeSegment(source: string, segment?: string) {
   if (!segment) return source
   const escaped = segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -99,6 +161,7 @@ export function parseOfferText(
   rawText: string,
   brands: BrandOption[]
 ): OfferExtraction {
+  const detectionSource = normalizeText(rawText)
   const lines = rawText
     .split(/\r?\n/)
     .map((line) => normalizeText(line))
@@ -127,6 +190,13 @@ export function parseOfferText(
   ) {
     brand = undefined
   }
+  const detectedBrands = detectBrandsFromText(detectionSource, brands)
+  if ((import.meta as any).env?.DEV) {
+    console.log("[offer] detectBrands", {
+      source: detectionSource,
+      detectedBrands,
+    })
+  }
 
   let cleaned = normalized
   cleaned = removeSegment(cleaned, percentOff?.raw)
@@ -154,6 +224,7 @@ export function parseOfferText(
   return {
     percentOff,
     brand,
+    detectedBrands,
     productDetails,
     title,
     source: {

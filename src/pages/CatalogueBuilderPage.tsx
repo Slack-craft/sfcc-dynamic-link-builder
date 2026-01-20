@@ -491,6 +491,7 @@ export default function CatalogueBuilderPage() {
   const [draftFacetBrands, setDraftFacetBrands] = useState<string[]>([])
   const [draftFacetArticleTypes, setDraftFacetArticleTypes] = useState<string[]>([])
   const [draftFacetExcludedPluIds, setDraftFacetExcludedPluIds] = useState<string[]>([])
+  const [draftFacetExcludePercentEnabled, setDraftFacetExcludePercentEnabled] = useState(false)
   const [tileThumbUrls, setTileThumbUrls] = useState<Record<string, string>>({})
   const [selectedColorUrl, setSelectedColorUrl] = useState<string | null>(null)
   const [pdfExtractRunning, setPdfExtractRunning] = useState(false)
@@ -959,6 +960,9 @@ export default function CatalogueBuilderPage() {
     setDraftFacetBrands(selectedTile.facetBuilder?.selectedBrands ?? [])
     setDraftFacetArticleTypes(selectedTile.facetBuilder?.selectedArticleTypes ?? [])
     setDraftFacetExcludedPluIds(selectedTile.facetBuilder?.excludedPluIds ?? [])
+    setDraftFacetExcludePercentEnabled(
+      selectedTile.facetBuilder?.excludePercentMismatchesEnabled ?? false
+    )
   }, [selectedTile])
 
   useEffect(() => {
@@ -1052,6 +1056,7 @@ export default function CatalogueBuilderPage() {
             selectedBrands: [],
             selectedArticleTypes: [],
             excludedPluIds: [],
+            excludePercentMismatchesEnabled: false,
           },
           linkSource: "manual",
           liveCapturedUrl: undefined,
@@ -1233,6 +1238,7 @@ export default function CatalogueBuilderPage() {
         selectedBrands: draftFacetBrands,
         selectedArticleTypes: draftFacetArticleTypes,
         excludedPluIds: draftFacetExcludedPluIds,
+        excludePercentMismatchesEnabled: draftFacetExcludePercentEnabled,
       },
     })
     upsertProject(updated)
@@ -1263,6 +1269,7 @@ export default function CatalogueBuilderPage() {
     draftFacetBrands,
     draftFacetArticleTypes,
     draftFacetExcludedPluIds,
+    draftFacetExcludePercentEnabled,
     draftLiveCapturedUrl,
     draftLinkSource,
     project,
@@ -2413,6 +2420,8 @@ export default function CatalogueBuilderPage() {
                           onFacetSelectedArticleTypesChange={setDraftFacetArticleTypes}
                           facetExcludedPluIds={draftFacetExcludedPluIds}
                           onFacetExcludedPluIdsChange={setDraftFacetExcludedPluIds}
+                          facetExcludePercentEnabled={draftFacetExcludePercentEnabled}
+                          onFacetExcludePercentEnabledChange={setDraftFacetExcludePercentEnabled}
                           detectedBrands={detectedBrands}
                           detectedOfferPercent={selectedTile.offer?.percentOff?.value}
                           liveLinkUrl={draftLiveCapturedUrl}

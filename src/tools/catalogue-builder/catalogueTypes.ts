@@ -31,6 +31,7 @@ export type Tile = {
     selectedBrands: string[]
     selectedArticleTypes: string[]
     excludedPluIds?: string[]
+    excludePercentMismatchesEnabled?: boolean
   }
   linkSource?: "manual" | "live"
   liveCapturedUrl?: string | null

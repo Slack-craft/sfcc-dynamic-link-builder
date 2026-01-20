@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Folder, Tag } from "lucide-react"
 import { BRAND_OPTIONS } from "@/data/brands"
 import type { LinkBuilderOption, LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -151,6 +152,8 @@ function SearchableSelect(props: {
   triggerRef?: React.RefObject<HTMLButtonElement | null>
   labelClassName?: string
   triggerClassName?: string
+  showLabel?: boolean
+  containerClassName?: string
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null)
 
@@ -180,6 +183,8 @@ function SearchableSelect(props: {
     onCommitNext,
     labelClassName,
     triggerClassName,
+    showLabel = true,
+    containerClassName,
   } = props
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -205,8 +210,8 @@ function SearchableSelect(props: {
   }
 
   return (
-    <div className="space-y-2">
-      <Label className={labelClassName}>{label}</Label>
+    <div className={containerClassName ?? "space-y-2"}>
+      {showLabel ? <Label className={labelClassName}>{label}</Label> : null}
 
       <Popover
         open={open}
@@ -317,6 +322,8 @@ type DynamicLinkBuilderProps = {
   onFacetSelectedArticleTypesChange?: (next: string[]) => void
   facetExcludedPluIds?: string[]
   onFacetExcludedPluIdsChange?: (next: string[]) => void
+  facetExcludePercentEnabled?: boolean
+  onFacetExcludePercentEnabledChange?: (next: boolean) => void
   detectedBrands?: string[]
   detectedOfferPercent?: number
   liveLinkUrl?: string
@@ -354,6 +361,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       onFacetSelectedArticleTypesChange,
       facetExcludedPluIds,
       onFacetExcludedPluIdsChange,
+      facetExcludePercentEnabled,
+      onFacetExcludePercentEnabledChange,
       detectedBrands,
       detectedOfferPercent,
       liveLinkUrl,
@@ -596,57 +605,89 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     })
   }
 
+  function IconFieldGroup(props: {
+    tooltip: string
+    icon: React.ReactNode
+    children: React.ReactNode
+  }) {
+    return (
+      <div className="flex w-full items-center">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-10 w-10 rounded-r-none"
+              aria-label={props.tooltip}
+            >
+              {props.icon}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{props.tooltip}</TooltipContent>
+        </Tooltip>
+        <div className="flex-1 min-w-0 -ml-px">{props.children}</div>
+      </div>
+    )
+  }
+
   const manualCategoryControl = (
-    <SearchableSelect
-      label="Category"
-      options={CATEGORY_OPTIONS}
-      value={category}
-      onChange={(opt) => {
-        const nextBrand = opt ? null : brand
-        setCategory(opt)
-        if (opt) setBrand(null)
-        commitState({
-          category: opt,
-          brand: nextBrand,
-          extension,
-          plus,
-          previewPathOverride,
-          captureMode,
-        })
-      }}
-      disabled={categoryDisabled}
-      placeholder={categoryDisabled ? "Disabled by selection rules." : "Type to search categories"}
-      onCommitNext={() => extensionRef.current?.focus()}
-      triggerRef={categoryTriggerRef}
-      labelClassName="text-xs font-medium text-muted-foreground"
-      triggerClassName="h-10 text-sm"
-    />
+    <IconFieldGroup tooltip="Category" icon={<Folder className="h-4 w-4" />}>
+      <SearchableSelect
+        label="Category"
+        options={CATEGORY_OPTIONS}
+        value={category}
+        onChange={(opt) => {
+          const nextBrand = opt ? null : brand
+          setCategory(opt)
+          if (opt) setBrand(null)
+          commitState({
+            category: opt,
+            brand: nextBrand,
+            extension,
+            plus,
+            previewPathOverride,
+            captureMode,
+          })
+        }}
+        disabled={categoryDisabled}
+        placeholder={categoryDisabled ? "Disabled by selection rules." : "Type to search categories"}
+        onCommitNext={() => extensionRef.current?.focus()}
+        triggerRef={categoryTriggerRef}
+        triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
+        showLabel={false}
+        containerClassName="space-y-0"
+      />
+    </IconFieldGroup>
   )
 
   const manualBrandControl = (
-    <SearchableSelect
-      label="Brand (Base)"
-      options={BRAND_OPTIONS}
-      value={brand}
-      onChange={(opt) => {
-        const nextCategory = opt ? null : category
-        setBrand(opt)
-        if (opt) setCategory(null)
-        commitState({
-          category: nextCategory,
-          brand: opt,
-          extension,
-          plus,
-          previewPathOverride,
-          captureMode,
-        })
-      }}
-      disabled={brandDisabled}
-      placeholder={brandDisabled ? "Disabled by selection rules." : "Type to search brands"}
-      onCommitNext={() => extensionRef.current?.focus()}
-      labelClassName="text-xs font-medium text-muted-foreground"
-      triggerClassName="h-10 text-sm"
-    />
+    <IconFieldGroup tooltip="Brand (Base)" icon={<Tag className="h-4 w-4" />}>
+      <SearchableSelect
+        label="Brand (Base)"
+        options={BRAND_OPTIONS}
+        value={brand}
+        onChange={(opt) => {
+          const nextCategory = opt ? null : category
+          setBrand(opt)
+          if (opt) setCategory(null)
+          commitState({
+            category: nextCategory,
+            brand: opt,
+            extension,
+            plus,
+            previewPathOverride,
+            captureMode,
+          })
+        }}
+        disabled={brandDisabled}
+        placeholder={brandDisabled ? "Disabled by selection rules." : "Type to search brands"}
+        onCommitNext={() => extensionRef.current?.focus()}
+        triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
+        showLabel={false}
+        containerClassName="space-y-0"
+      />
+    </IconFieldGroup>
   )
 
   function updateExtractedFlags(
@@ -1168,6 +1209,8 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           onSelectedArticleTypesChange={onFacetSelectedArticleTypesChange}
           excludedPluIds={facetExcludedPluIds}
           onExcludedPluIdsChange={onFacetExcludedPluIdsChange}
+          excludePercentMismatchesEnabled={facetExcludePercentEnabled}
+          onExcludePercentMismatchesChange={onFacetExcludePercentEnabledChange}
           onConvertToPlu={convertToPluLink}
           detectedBrands={detectedBrands}
           detectedOfferPercent={detectedOfferPercent}

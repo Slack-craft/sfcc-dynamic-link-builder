@@ -24,8 +24,7 @@ import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Check, ChevronDown, List, X } from "lucide-react"
-import { toast } from "sonner"
+import { Check, ChevronDown, List, ListPlus, Percent, SlidersHorizontal, Tags, X } from "lucide-react"
 import type { CsvRow } from "@/lib/catalogueDataset/parseCsv"
 import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
 import { getFacetValue } from "@/lib/catalogueDataset/facets"
@@ -55,6 +54,8 @@ type FacetMatchesCardProps = {
   onSelectedArticleTypesChange?: (next: string[]) => void
   excludedPluIds?: string[]
   onExcludedPluIdsChange?: (next: string[]) => void
+  excludePercentMismatchesEnabled?: boolean
+  onExcludePercentMismatchesChange?: (enabled: boolean) => void
   onConvertToPlu?: (pluIds: string[]) => void
   detectedOfferPercent?: number
   detectedBrands?: string[]
@@ -72,6 +73,8 @@ type MultiSelectProps = {
   previewMaxChars?: number
   labelClassName?: string
   triggerClassName?: string
+  showLabel?: boolean
+  containerClassName?: string
 }
 
 function buildQueryFromSelections(selected: Record<string, string[]>) {
@@ -213,6 +216,28 @@ function useResponsiveSelectionPreview(params: {
   return { displayText }
 }
 
+function IconFieldGroup(props: { tooltip: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="flex w-full items-center">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-10 w-10 rounded-r-none"
+            aria-label={props.tooltip}
+          >
+            {props.icon}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{props.tooltip}</TooltipContent>
+      </Tooltip>
+      <div className="flex-1 min-w-0 -ml-px">{props.children}</div>
+    </div>
+  )
+}
+
 function MultiSelect({
   label,
   options,
@@ -224,6 +249,8 @@ function MultiSelect({
   previewMaxChars = 36,
   labelClassName,
   triggerClassName,
+  showLabel = true,
+  containerClassName,
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -262,8 +289,8 @@ function MultiSelect({
   const previewText = displayText || fallbackText || placeholder
 
   return (
-    <div className="space-y-1">
-      <Label className={labelClassName}>{label}</Label>
+    <div className={containerClassName ?? "space-y-1"}>
+      {showLabel ? <Label className={labelClassName}>{label}</Label> : null}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
@@ -337,6 +364,8 @@ export function FacetMatchesCard({
   onSelectedArticleTypesChange,
   excludedPluIds = [],
   onExcludedPluIdsChange,
+  excludePercentMismatchesEnabled = false,
+  onExcludePercentMismatchesChange,
   onConvertToPlu,
   detectedOfferPercent,
   detectedBrands = [],
@@ -451,26 +480,47 @@ export function FacetMatchesCard({
   const facetColumnCount = dataset?.columnMeta?.facetKeys.length ?? 0
 
   const excludedSet = useMemo(() => new Set(excludedPluIds), [excludedPluIds])
+  const percentMismatchSet = useMemo(() => {
+    if (!detectedOfferPercent || detectedOfferPercent <= 0) return new Set<string>()
+    const set = new Set<string>()
+    matches.rows.forEach((row) => {
+      const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
+      if (!plu) return
+      const displayPercent = resolvePercentOff(row)
+      if (!displayPercent || displayPercent <= 0) return
+      if (displayPercent !== detectedOfferPercent) {
+        set.add(plu)
+      }
+    })
+    return set
+  }, [detectedOfferPercent, matches.rows])
+  const effectiveExcludedSet = useMemo(() => {
+    if (!excludePercentMismatchesEnabled) return excludedSet
+    const merged = new Set(excludedSet)
+    percentMismatchSet.forEach((plu) => merged.add(plu))
+    return merged
+  }, [excludePercentMismatchesEnabled, excludedSet, percentMismatchSet])
   const filteredPluIds = useMemo(
-    () => matches.pluIds.filter((plu) => !excludedSet.has(plu)),
-    [matches.pluIds, excludedSet]
+    () => matches.pluIds.filter((plu) => !effectiveExcludedSet.has(plu)),
+    [matches.pluIds, effectiveExcludedSet]
   )
+  const excludedCount = useMemo(() => effectiveExcludedSet.size, [effectiveExcludedSet])
   const includedRows = useMemo(() => {
     if (matches.rows.length === 0) return []
     return matches.rows.filter((row) => {
       const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
       if (!plu) return false
-      return !excludedSet.has(plu)
+      return !effectiveExcludedSet.has(plu)
     })
-  }, [matches.rows, excludedSet])
+  }, [matches.rows, effectiveExcludedSet])
   const excludedRows = useMemo(() => {
     if (matches.rows.length === 0) return []
     return matches.rows.filter((row) => {
       const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
       if (!plu) return false
-      return excludedSet.has(plu)
+      return effectiveExcludedSet.has(plu)
     })
-  }, [matches.rows, excludedSet])
+  }, [matches.rows, effectiveExcludedSet])
   const displayRows = useMemo(() => [...includedRows, ...excludedRows], [includedRows, excludedRows])
 
   function getProductImageUrl(plu: string) {
@@ -518,7 +568,7 @@ export function FacetMatchesCard({
       const isMatch =
         hasOfferPercent && percent !== undefined && percent === detectedOfferPercent
       const articleType = getFacetValue(row, "adArticleType", scope)
-      const isExcluded = excludedSet.has(plu)
+      const isExcluded = effectiveExcludedSet.has(plu)
 
       return (
         <Card
@@ -592,7 +642,7 @@ export function FacetMatchesCard({
         </Card>
       )
     },
-    [detectedOfferPercent, excludedPluIds, excludedSet, scope, setExcludedPluIds]
+    [detectedOfferPercent, effectiveExcludedSet, excludedPluIds, scope, setExcludedPluIds]
   )
 
   return (
@@ -601,7 +651,10 @@ export function FacetMatchesCard({
         <div className="flex flex-wrap items-start gap-4">
           <div className="flex flex-wrap items-center gap-3 text-sm font-medium">
             <span>Facet columns detected: {facetColumnCount}</span>
-            <span className="text-muted-foreground">Matching products: {matches.count}</span>
+            <span className="text-muted-foreground">
+              Matching products: {matches.count}
+              {excludedCount > 0 ? ` (${excludedCount} excluded)` : ""}
+            </span>
           </div>
           <div className="flex min-w-0 flex-1 items-center">
             <Input
@@ -622,48 +675,43 @@ export function FacetMatchesCard({
             </Button>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => onConvertToPlu?.(filteredPluIds)}
-              disabled={filteredPluIds.length === 0}
-            >
-              Convert to PLU Link
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={!detectedOfferPercent || detectedOfferPercent <= 0}
-              onClick={() => {
-                if (!detectedOfferPercent || detectedOfferPercent <= 0) return
-                const nextExcluded = new Set(excludedPluIds)
-                let added = 0
-                matches.rows.forEach((row) => {
-                  const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
-                  if (!plu) return
-                  const displayPercent = resolvePercentOff(row)
-                  if (!displayPercent || displayPercent <= 0) return
-                  if (displayPercent !== detectedOfferPercent) {
-                    if (!nextExcluded.has(plu)) {
-                      nextExcluded.add(plu)
-                      added += 1
-                    }
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={() => onConvertToPlu?.(filteredPluIds)}
+                  disabled={filteredPluIds.length === 0}
+                  aria-label="Convert to PLU Link"
+                >
+                  <ListPlus className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Convert to PLU Link</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={excludePercentMismatchesEnabled ? "secondary" : "outline"}
+                  disabled={!detectedOfferPercent || detectedOfferPercent <= 0}
+                  aria-pressed={excludePercentMismatchesEnabled}
+                  aria-label="Exclude % mismatches"
+                  onClick={() =>
+                    onExcludePercentMismatchesChange?.(!excludePercentMismatchesEnabled)
                   }
-                })
-                setExcludedPluIds(Array.from(nextExcluded))
-                if (added > 0) {
-                  toast.success(
-                    `Excluded ${added} items that did not match ${detectedOfferPercent}%.`
-                  )
-                } else {
-                  toast.info("No mismatching items found.")
-                }
-              }}
-            >
-              Exclude % mismatches
-            </Button>
+                >
+                  <Percent className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {excludePercentMismatchesEnabled
+                  ? "Exclude % mismatches (on)"
+                  : "Exclude % mismatches (off)"}
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </CardHeader>
@@ -672,48 +720,54 @@ export function FacetMatchesCard({
           <div className="space-y-3">
             {pluPanel ? (
               <Collapsible open={pluPanelOpen} onOpenChange={onPluPanelOpenChange}>
-                <div className="grid w-full items-end gap-3 md:grid-cols-5">
+                <div className="flex w-full items-end gap-3">
                   {manualCategoryControl ? (
-                    <div className="w-full min-w-0">{manualCategoryControl}</div>
+                    <div className="flex-1 min-w-0">{manualCategoryControl}</div>
                   ) : null}
                   {manualBrandControl ? (
-                    <div className="w-full min-w-0">{manualBrandControl}</div>
+                    <div className="flex-1 min-w-0">{manualBrandControl}</div>
                   ) : null}
-                  <div className="w-full min-w-0">
-                    <MultiSelect
-                      label="Brand (Facet)"
-                      options={brandOptions}
-                      selected={selectedBrands}
-                      onChange={setSelectedBrands}
-                      placeholder="Select brands"
-                      searchPlaceholder="Search brands"
-                      disabled={!dataset}
-                      labelClassName="text-xs font-medium text-muted-foreground"
-                      triggerClassName="h-10 text-sm"
-                      previewMaxChars={34}
-                    />
+                  <div className="flex-1 min-w-0">
+                    <IconFieldGroup tooltip="Brand (Facet)" icon={<Tags className="h-4 w-4" />}>
+                      <MultiSelect
+                        label="Brand (Facet)"
+                        options={brandOptions}
+                        selected={selectedBrands}
+                        onChange={setSelectedBrands}
+                        placeholder="Select brands"
+                        searchPlaceholder="Search brands"
+                        disabled={!dataset}
+                        triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
+                        previewMaxChars={34}
+                        showLabel={false}
+                        containerClassName="space-y-0"
+                      />
+                    </IconFieldGroup>
                   </div>
-                  <div className="w-full min-w-0">
-                    <MultiSelect
-                      label="Article Type"
-                      options={articleTypeOptions}
-                      selected={selectedArticleTypes}
-                      onChange={setSelectedArticleTypes}
-                      disabled={!dataset || selectedBrands.length === 0}
-                      placeholder={
-                        !dataset
-                          ? "Load dataset first"
-                          : selectedBrands.length === 0
-                            ? "Select brand first"
-                            : "Select article types"
-                      }
-                      searchPlaceholder="Search types"
-                      labelClassName="text-xs font-medium text-muted-foreground"
-                      triggerClassName="h-10 text-sm"
-                      previewMaxChars={40}
-                    />
+                  <div className="flex-1 min-w-0">
+                    <IconFieldGroup tooltip="Article Type" icon={<SlidersHorizontal className="h-4 w-4" />}>
+                      <MultiSelect
+                        label="Article Type"
+                        options={articleTypeOptions}
+                        selected={selectedArticleTypes}
+                        onChange={setSelectedArticleTypes}
+                        disabled={!dataset || selectedBrands.length === 0}
+                        placeholder={
+                          !dataset
+                            ? "Load dataset first"
+                            : selectedBrands.length === 0
+                              ? "Select brand first"
+                              : "Select article types"
+                        }
+                        searchPlaceholder="Search types"
+                        triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
+                        previewMaxChars={40}
+                        showLabel={false}
+                        containerClassName="space-y-0"
+                      />
+                    </IconFieldGroup>
                   </div>
-                  <div className="flex w-full min-w-0">
+                  <div className="shrink-0">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <CollapsibleTrigger asChild>
@@ -754,48 +808,54 @@ export function FacetMatchesCard({
               </Collapsible>
             ) : (
               <>
-                <div className="grid w-full items-end gap-3 md:grid-cols-5">
+                <div className="flex w-full items-end gap-3">
                   {manualCategoryControl ? (
-                    <div className="w-full min-w-0">{manualCategoryControl}</div>
+                    <div className="flex-1 min-w-0">{manualCategoryControl}</div>
                   ) : null}
                   {manualBrandControl ? (
-                    <div className="w-full min-w-0">{manualBrandControl}</div>
+                    <div className="flex-1 min-w-0">{manualBrandControl}</div>
                   ) : null}
-                  <div className="w-full min-w-0">
-                    <MultiSelect
-                      label="Brand (Facet)"
-                      options={brandOptions}
-                      selected={selectedBrands}
-                      onChange={setSelectedBrands}
-                      placeholder="Select brands"
-                      searchPlaceholder="Search brands"
-                      disabled={!dataset}
-                      labelClassName="text-xs font-medium text-muted-foreground"
-                      triggerClassName="h-10 text-sm"
-                      previewMaxChars={34}
-                    />
+                  <div className="flex-1 min-w-0">
+                    <IconFieldGroup tooltip="Brand (Facet)" icon={<Tags className="h-4 w-4" />}>
+                      <MultiSelect
+                        label="Brand (Facet)"
+                        options={brandOptions}
+                        selected={selectedBrands}
+                        onChange={setSelectedBrands}
+                        placeholder="Select brands"
+                        searchPlaceholder="Search brands"
+                        disabled={!dataset}
+                        triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
+                        previewMaxChars={34}
+                        showLabel={false}
+                        containerClassName="space-y-0"
+                      />
+                    </IconFieldGroup>
                   </div>
-                  <div className="w-full min-w-0">
-                    <MultiSelect
-                      label="Article Type"
-                      options={articleTypeOptions}
-                      selected={selectedArticleTypes}
-                      onChange={setSelectedArticleTypes}
-                      disabled={!dataset || selectedBrands.length === 0}
-                      placeholder={
-                        !dataset
-                          ? "Load dataset first"
-                          : selectedBrands.length === 0
-                            ? "Select brand first"
-                            : "Select article types"
-                      }
-                      searchPlaceholder="Search types"
-                      labelClassName="text-xs font-medium text-muted-foreground"
-                      triggerClassName="h-10 text-sm"
-                      previewMaxChars={40}
-                    />
+                  <div className="flex-1 min-w-0">
+                    <IconFieldGroup tooltip="Article Type" icon={<SlidersHorizontal className="h-4 w-4" />}>
+                      <MultiSelect
+                        label="Article Type"
+                        options={articleTypeOptions}
+                        selected={selectedArticleTypes}
+                        onChange={setSelectedArticleTypes}
+                        disabled={!dataset || selectedBrands.length === 0}
+                        placeholder={
+                          !dataset
+                            ? "Load dataset first"
+                            : selectedBrands.length === 0
+                              ? "Select brand first"
+                              : "Select article types"
+                        }
+                        searchPlaceholder="Search types"
+                        triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
+                        previewMaxChars={40}
+                        showLabel={false}
+                        containerClassName="space-y-0"
+                      />
+                    </IconFieldGroup>
                   </div>
-                  <div />
+                  <div className="shrink-0" />
                 </div>
                 {manualBaseActions ? (
                   <div className="flex flex-wrap items-center gap-2">{manualBaseActions}</div>

@@ -1,4 +1,5 @@
 import type { CatalogueProject, Region, Tile } from "./catalogueTypes"
+import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 
 export type CatalogueProjectsState = {
   activeProjectId: string | null
@@ -49,6 +50,16 @@ function normalizeProject(value: unknown): CatalogueProject | null {
     project.dataset && typeof project.dataset === "object"
       ? project.dataset
       : null
+  const tiles = project.tiles.map((tile) => {
+    if (!tile || typeof tile !== "object") return tile
+    const linkState = tile.linkBuilderState
+    if (!linkState || typeof linkState !== "object") return tile
+    if (!("extension" in linkState)) return tile
+    const { extension: _legacyExtension, ...rest } = linkState as LinkBuilderState & {
+      extension?: string
+    }
+    return { ...tile, linkBuilderState: rest }
+  })
 
   return {
     id: project.id,
@@ -69,7 +80,7 @@ function normalizeProject(value: unknown): CatalogueProject | null {
         ? project.pdfDetection
         : {},
     tileMatches,
-    tiles: project.tiles,
+    tiles,
   }
 }
 

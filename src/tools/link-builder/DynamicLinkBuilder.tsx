@@ -45,7 +45,6 @@ type SavedLink = {
 
   category: LinkBuilderOption | null
   brand: LinkBuilderOption | null
-  extension: string
   plus: string[] // length 20
   previewPathOverride?: string
   captureMode?: LinkBuilderState["captureMode"]
@@ -73,7 +72,6 @@ function normalizeState(state?: Partial<LinkBuilderState>): LinkBuilderState {
   return {
     category: state?.category ?? null,
     brand: state?.brand ?? null,
-    extension: state?.extension ?? "",
     plus: Array.from({ length: baseLength }, (_, i) => state?.plus?.[i] ?? ""),
     previewPathOverride: state?.previewPathOverride ?? "",
     captureMode: state?.captureMode ?? "path+filters",
@@ -87,7 +85,6 @@ function optionEquals(a: LinkBuilderOption | null, b: LinkBuilderOption | null) 
 function statesEqual(a: LinkBuilderState, b: LinkBuilderState) {
   if (!optionEquals(a.category, b.category)) return false
   if (!optionEquals(a.brand, b.brand)) return false
-  if (a.extension !== b.extension) return false
   if ((a.previewPathOverride ?? "") !== (b.previewPathOverride ?? "")) return false
   if ((a.captureMode ?? "path+filters") !== (b.captureMode ?? "path+filters")) return false
   if (a.plus.length !== b.plus.length) return false
@@ -97,21 +94,6 @@ function statesEqual(a: LinkBuilderState, b: LinkBuilderState) {
   return true
 }
 
-
-function extractQueryString(fullUrlOrQuery: string): string {
-  const trimmed = fullUrlOrQuery.trim()
-  if (!trimmed) return ""
-
-  const qIndex = trimmed.indexOf("?")
-  if (qIndex >= 0) return trimmed.slice(qIndex) // includes '?'
-
-  // If they pasted only query params (no '?'), accept and normalise
-  if (trimmed.includes("=")) {
-    return `?${trimmed.replace(/^\&+/, "")}`
-  }
-
-  return ""
-}
 
 function buildIdFilter(pluValues: string[]): string {
   const joined = pluValues.join("%7c")
@@ -347,6 +329,7 @@ type DynamicLinkBuilderProps = {
   onFacetExcludePercentEnabledChange?: (next: boolean) => void
   detectedBrands?: string[]
   detectedOfferPercent?: number
+  manualBaseActions?: React.ReactNode
   liveLinkUrl?: string
   onLiveLinkChange?: (value: string) => void
   liveLinkEditable?: boolean
@@ -394,6 +377,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       onFacetExcludePercentEnabledChange,
       detectedBrands,
       detectedOfferPercent,
+      manualBaseActions,
       liveLinkUrl,
       onLiveLinkChange,
       liveLinkEditable = false,
@@ -428,7 +412,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   // Base selection (mutually exclusive)
   const [category, setCategory] = useState<LinkBuilderOption | null>(normalizedInitial.category)
   const [brand, setBrand] = useState<LinkBuilderOption | null>(normalizedInitial.brand)
-  const extensionRef = useRef<HTMLTextAreaElement | null>(null)
   const categoryTriggerRef = useRef<HTMLButtonElement | null>(null)
 
   const [adpackIsOpen, setAdpackIsOpen] = useState(false)
@@ -475,7 +458,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
 
 
   // Refinement (mutually exclusive)
-  const [extension, setExtension] = useState(normalizedInitial.extension)
   const [plus, setPlus] = useState<string[]>(normalizedInitial.plus)
   const [pluDrafts, setPluDrafts] = useState<string[]>(normalizedInitial.plus)
   const activePluIndexRef = useRef<number | null>(null)
@@ -520,11 +502,10 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   useEffect(() => {
     if (!initialState) return
     const normalized = normalizeState(initialState)
-    const current = { category, brand, extension, plus }
+    const current = { category, brand, plus, previewPathOverride, captureMode }
     if (statesEqual(normalized, current)) return
     setCategory(normalized.category)
     setBrand(normalized.brand)
-    setExtension(normalized.extension)
     setPlus(normalized.plus)
     setPluDrafts(normalized.plus)
     setPreviewPathOverride(normalized.previewPathOverride ?? "")
@@ -581,7 +562,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   const brandDisabled = category !== null
   const categoryDisabled = brand !== null
 
-  const extensionDisabled = false
   const pluDisabled = false
 
   function buildOutputFromState(state: LinkBuilderState) {
@@ -646,11 +626,9 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     const nextPlus = Array.from({ length: baseLength }, (_, i) => normalized[i] ?? "")
     setPlus(nextPlus)
     setPluDrafts(nextPlus)
-    setExtension("")
     commitState({
       category,
       brand,
-      extension: "",
       plus: nextPlus,
       previewPathOverride,
       captureMode,
@@ -696,7 +674,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           commitState({
             category: opt,
             brand: nextBrand,
-            extension,
             plus,
             previewPathOverride,
             captureMode,
@@ -704,7 +681,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
         }}
         disabled={categoryDisabled}
         placeholder={categoryDisabled ? "Disabled by selection rules." : "Type to search categories"}
-        onCommitNext={() => extensionRef.current?.focus()}
         triggerRef={categoryTriggerRef}
         triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
         showLabel={false}
@@ -726,7 +702,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           commitState({
             category: nextCategory,
             brand: opt,
-            extension,
             plus,
             previewPathOverride,
             captureMode,
@@ -734,7 +709,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
         }}
         disabled={brandDisabled}
         placeholder={brandDisabled ? "Disabled by selection rules." : "Type to search brands"}
-        onCommitNext={() => extensionRef.current?.focus()}
         triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
         showLabel={false}
         containerClassName="space-y-0"
@@ -782,20 +756,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     commitState({
       category,
       brand,
-      extension,
       plus: nextPlus,
-      previewPathOverride,
-      captureMode,
-    })
-  }
-
-  function clearExtension() {
-    setExtension("")
-    commitState({
-      category,
-      brand,
-      extension: "",
-      plus,
       previewPathOverride,
       captureMode,
     })
@@ -804,7 +765,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   function resetBuilder() {
     setCategory(null)
     setBrand(null)
-    setExtension("")
     setPreviewPathOverride("")
     setCaptureMode("path+filters")
     clearPLUs()
@@ -848,7 +808,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     commitState({
       category,
       brand,
-      extension,
       plus: nextPlus,
       previewPathOverride,
       captureMode,
@@ -867,7 +826,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
 
     setCategory(restoredCategory)
     setBrand(restoredBrand)
-    setExtension(item.extension ?? "")
     setPreviewPathOverride(item.previewPathOverride ?? "")
     setCaptureMode(item.captureMode ?? "path+filters")
     const baseLength = Math.max(20, item.plus?.length ?? 0)
@@ -876,7 +834,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     commitState({
       category: restoredCategory,
       brand: restoredBrand,
-      extension: item.extension ?? "",
       plus: Array.from({ length: baseLength }, (_, i) => item.plus?.[i] ?? ""),
       previewPathOverride: item.previewPathOverride ?? "",
       captureMode: item.captureMode ?? "path+filters",
@@ -932,7 +889,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       output: outputToShow,
       category,
       brand,
-      extension,
       plus: Array.from({ length: Math.max(20, plus.length) }, (_, i) => (plus[i] ?? "").trim()),
     }
 
@@ -967,7 +923,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     const nextState: LinkBuilderState = {
       category,
       brand,
-      extension,
       plus: committedPlus,
       previewPathOverride,
       captureMode,
@@ -1066,7 +1021,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                   commitState({
                     category,
                     brand,
-                    extension,
                     plus: nextPlus,
                     previewPathOverride,
                     captureMode,
@@ -1164,7 +1118,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEmbedded, output, category, brand, extension, plus])
+  }, [isEmbedded, output, category, brand, plus])
 
 
   return (
@@ -1181,72 +1135,14 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
 
       <main className={mainClass}>
           <div className={gridClass}>
-        {/* Inputs */}
-        <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]">
-          <CardHeader>
-            <CardTitle>Inputs</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Refinement */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="font-medium">Refinement (pick one)</h2>
-                <div className="flex gap-2">
-                  <Button type="button" variant="ghost" size="sm" onClick={clearExtension} disabled={extensionDisabled}>
-                    Clear extension
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={clearPLUs} disabled={pluDisabled}>
-                    Clear PLUs
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Label>Extension (paste a full URL)</Label>
-                  <p className="text-xs text-muted-foreground">
-                    The filter selection will be extracted automatically.
-                  </p>
-                </div>
-                <Textarea
-                  ref={extensionRef}
-                  value={extension}
-                  onChange={(e) => setExtension(e.target.value)}
-                  onBlur={() => {
-                    const normalizedExtension = extractQueryString(extension) || extension
-                    if (normalizedExtension !== extension) {
-                      setExtension(normalizedExtension)
-                    }
-                    commitState({
-                      category,
-                      brand,
-                      extension: normalizedExtension,
-                      plus,
-                      previewPathOverride,
-                      captureMode,
-                    })
-                  }}
-                  placeholder={
-                    extensionDisabled
-                      ? "Disabled by selection rules."
-                      : "https://www.supercheapauto.com.au/spare-parts?prefn1=...&sz=36"
-                  }
-                  disabled={extensionDisabled}
-                />
-
-                
-              </div>
-
-            </div>
-          </CardContent>
-        </Card>
-
+        
         <FacetMatchesCard
           scope={scope}
           dataset={dataset}
           onOpenDatasetPanel={onOpenDatasetPanel}
           manualCategoryControl={manualCategoryControl}
           manualBrandControl={manualBrandControl}
+          manualBaseActions={manualBaseActions}
           previewUrlValue={previewUrlValue}
           onPreviewUrlChange={onPreviewUrlChange}
           activeLinkMode={activeLinkMode}
@@ -1268,7 +1164,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
             commitState({
               category,
               brand,
-              extension,
               plus,
               previewPathOverride,
               captureMode: nextMode,
@@ -1293,18 +1188,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           detectedBrands={detectedBrands}
           detectedOfferPercent={detectedOfferPercent}
           pluValues={plus}
-          onApplyExtension={(query) => {
-            const nextExtension = query || ""
-            setExtension(nextExtension)
-            commitState({
-              category,
-              brand,
-              extension: nextExtension,
-              plus,
-              previewPathOverride,
-              captureMode,
-            })
-          }}
         />
 
         {/* Output */}

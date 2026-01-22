@@ -12,7 +12,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { FileText, Info, Trash2, Upload } from "lucide-react"
+import { FileText, Info, Trash2, Upload, Eraser } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -449,11 +449,20 @@ function createEmptyLinkBuilderState(): LinkBuilderState {
   return {
     category: { label: "Catalog", value: "catalogue-onsale" },
     brand: null,
-    extension: "",
     plus: Array.from({ length: MAX_PLUS_FIELDS }, () => ""),
     previewPathOverride: "",
     captureMode: "path+filters",
   }
+}
+
+function stripLegacyExtensionFromTile(tile: Tile): Tile {
+  const state = tile.linkBuilderState
+  if (!state || typeof state !== "object") return tile
+  if (!("extension" in state)) return tile
+  const { extension: _legacyExtension, ...rest } = state as LinkBuilderState & {
+    extension?: string
+  }
+  return { ...tile, linkBuilderState: rest }
 }
 
 function createEmptyExtractedFlags() {
@@ -1855,6 +1864,7 @@ export default function CatalogueBuilderPage() {
               ...offerUpdate,
             })
           }
+
           continue
         }
         const mapping = parseTileMapping(fileName)
@@ -2078,6 +2088,29 @@ export default function CatalogueBuilderPage() {
     }
   }
 
+  function clearLegacyExtensionData() {
+    if (!project) return
+    let changed = false
+    const cleanedTiles = project.tiles.map((tile) => {
+      const cleaned = stripLegacyExtensionFromTile(tile)
+      if (cleaned !== tile) changed = true
+      return cleaned
+    })
+    if (!changed) {
+      toast.info("No legacy Extension data found for this project.")
+      return
+    }
+    setProjectsState((prev) => ({
+      ...prev,
+      projects: prev.projects.map((item) =>
+        item.id === project.id
+          ? { ...item, tiles: cleanedTiles, updatedAt: new Date().toISOString() }
+          : item
+      ),
+    }))
+    toast.success("Legacy Extension data cleared for this project.")
+  }
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const isCmdOrCtrl = event.metaKey || event.ctrlKey
@@ -2228,6 +2261,15 @@ export default function CatalogueBuilderPage() {
                   <Trash2 className="mr-2 h-4 w-4" />
                   Clear Dataset
                 </DropdownMenuItem>
+                {isDev ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={clearLegacyExtensionData}>
+                      <Eraser className="mr-2 h-4 w-4" />
+                      Clear legacy Extension data (DEV)
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -2559,6 +2601,38 @@ export default function CatalogueBuilderPage() {
                             extensionStatus === "available"
                               ? "Extension enabled"
                               : "Extension not installed - manual paste required"
+                          }
+                          manualBaseActions={
+                            draftActiveLinkMode === "plu" ? (
+                              <TooltipProvider delayDuration={200}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="outline"
+                                      className="h-10 w-10"
+                                      aria-label="Clear PLUs"
+                                      onClick={() => {
+                                        if (!draftLinkState.plus.some((value) => value.trim())) return
+                                        const nextState: LinkBuilderState = {
+                                          ...draftLinkState,
+                                          plus: draftLinkState.plus.map(() => ""),
+                                        }
+                                        setDraftLinkState(nextState)
+                                        setDraftExtractedFlags(createEmptyExtractedFlags())
+                                        setDraftLinkOutput(
+                                          computeOutputForMode(nextState, draftActiveLinkMode, facetQuery)
+                                        )
+                                      }}
+                                    >
+                                      <Eraser className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Clear PLUs</TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            ) : null
                           }
                           extractedPluFlags={draftExtractedFlags}
                           onExtractedPluFlagsChange={setDraftExtractedFlags}

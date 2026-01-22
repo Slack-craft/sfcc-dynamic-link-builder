@@ -24,19 +24,6 @@ function slugifyLabel(value: string) {
     .replace(/^-|-$/g, "")
 }
 
-function extractQueryOnly(input: string) {
-  const trimmed = input.trim()
-  if (!trimmed) return ""
-  if (trimmed.startsWith("?")) return trimmed
-  try {
-    const parsed = new URL(trimmed)
-    return parsed.search || ""
-  } catch {
-    const index = trimmed.indexOf("?")
-    return index >= 0 ? trimmed.slice(index) : ""
-  }
-}
-
 function buildIdFilter(pluValues: string[]) {
   const joined = pluValues.join("%7c")
   return `?prefn1=id&prefv1=${joined}`
@@ -63,10 +50,8 @@ function buildPreviewUrlFromState(state: LinkBuilderState, scope: "AU" | "NZ" = 
       ? "https://staging.supercheapauto.co.nz"
       : "https://staging.supercheapauto.com.au"
 
-  const extensionQuery = extractQueryOnly(state.extension)
   const cleanedPLUs = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
-  const hasExtensionText = state.extension.trim().length > 0
-  const isSinglePlu = !hasExtensionText && cleanedPLUs.length === 1
+  const isSinglePlu = cleanedPLUs.length === 1
   const isMultiPlu = cleanedPLUs.length > 1
 
   if (isSinglePlu) {
@@ -87,11 +72,7 @@ function buildPreviewUrlFromState(state: LinkBuilderState, scope: "AU" | "NZ" = 
   }
 
   if (derivedPath) {
-    return `${domain}${derivedPath}${extensionQuery}`
-  }
-
-  if (extensionQuery) {
-    return `${domain}${extensionQuery}`
+    return `${domain}${derivedPath}`
   }
 
   return domain
@@ -101,7 +82,6 @@ export default function LinkBuilderPage() {
   const [builderState, setBuilderState] = useState<LinkBuilderState>({
     category: null,
     brand: null,
-    extension: "",
     plus: Array.from({ length: 20 }, () => ""),
     previewPathOverride: "",
     captureMode: "path+filters",
@@ -163,7 +143,6 @@ export default function LinkBuilderPage() {
     }
 
     const pathname = parsed.pathname ?? ""
-    const capturedSearch = parsed.search ?? ""
     const params = new URLSearchParams(parsed.search)
 
     const productMatch = pathname.match(/\/p\/[^/]+\/(\d{4,8})\.html/i)
@@ -174,7 +153,6 @@ export default function LinkBuilderPage() {
           ...currentState,
           category: null,
           brand: null,
-          extension: "",
           plus: buildPlusArray([plu]),
           previewPathOverride: "",
         },
@@ -198,7 +176,6 @@ export default function LinkBuilderPage() {
         return {
           nextState: {
             ...baseState,
-            extension: "",
             plus: buildPlusArray(parsedPlus),
             previewPathOverride: "",
           },
@@ -214,7 +191,6 @@ export default function LinkBuilderPage() {
           ...currentState,
           category: { label: "Catalog", value: "catalogue-onsale" },
           brand: null,
-          extension: capturedSearch,
           plus: buildPlusArray([]),
           previewPathOverride: "/catalogue-out-now",
         },
@@ -240,7 +216,6 @@ export default function LinkBuilderPage() {
           ...currentState,
           brand: match,
           category: null,
-          extension: capturedSearch,
           plus: buildPlusArray([]),
           previewPathOverride: pathname,
         },

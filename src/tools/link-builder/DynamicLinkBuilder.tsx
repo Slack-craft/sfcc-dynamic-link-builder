@@ -1191,7 +1191,11 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
         />
 
         {/* Output */}
-        <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]">
+        <Card
+          className={`lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]${
+            mode === "embedded" ? " sr-only" : ""
+          }`}
+        >
             <CardHeader>
               <CardTitle>Output</CardTitle>
             </CardHeader>

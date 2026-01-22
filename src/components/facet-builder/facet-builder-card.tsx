@@ -20,11 +20,31 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { Input } from "@/components/ui/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from "@/components/ui/input-group"
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Check, ChevronDown, Link2, List, ListPlus, Percent, SlidersHorizontal, Tags, X } from "lucide-react"
+import {
+  Check,
+  ChevronDown,
+  ExternalLink,
+  Info,
+  Link2,
+  List,
+  ListPlus,
+  MousePointerClick,
+  Percent,
+  SlidersHorizontal,
+  Tags,
+  X,
+} from "lucide-react"
 import type { CsvRow } from "@/lib/catalogueDataset/parseCsv"
 import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
 import { getFacetValue } from "@/lib/catalogueDataset/facets"
@@ -409,6 +429,16 @@ export function FacetMatchesCard({
   const setSelectedArticleTypes = onSelectedArticleTypesChange ?? (() => {})
   const setExcludedPluIds = onExcludedPluIdsChange ?? (() => {})
   const appliedDetectedRef = useRef<string | null>(null)
+  const previewRestValue = useMemo(() => {
+    if (!previewUrlValue) return ""
+    return previewUrlValue.replace(/^https?:\/\//i, "").trim()
+  }, [previewUrlValue])
+
+  const handlePreviewRestChange = (value: string) => {
+    const stripped = value.replace(/^https?:\/\//i, "").trim()
+    const next = stripped ? `https://${stripped}` : ""
+    onPreviewUrlChange?.(next)
+  }
 
   const brandOptions = useMemo(() => {
     if (!dataset) return []
@@ -736,143 +766,161 @@ export function FacetMatchesCard({
             </span>
           </div>
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <div className="flex min-w-0 flex-1 items-center">
-              <Input
-                value={previewUrlValue || ""}
-                onChange={(event) => onPreviewUrlChange?.(event.target.value)}
-                placeholder="Preview URL"
-                className="h-8 min-w-0 flex-1 text-xs"
-              />
-            </div>
             <TooltipProvider delayDuration={200}>
-              <div className="flex items-center gap-2">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant={activeLinkMode === "plu" ? "secondary" : "outline"}
-                      onClick={() => onActiveLinkModeChange?.("plu")}
-                      disabled={!isPluAvailable}
-                      aria-label="PLU Link"
-                    >
-                      <List className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>PLU Link</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant={activeLinkMode === "facet" ? "secondary" : "outline"}
-                      onClick={() => onActiveLinkModeChange?.("facet")}
-                      disabled={!isFacetAvailable}
-                      aria-label="Facet Link"
-                    >
-                      <SlidersHorizontal className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Facet Link</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant={activeLinkMode === "live" ? "secondary" : "outline"}
-                      onClick={() => onActiveLinkModeChange?.("live")}
-                      disabled={!isLiveAvailable}
-                      aria-label="Live Link"
-                    >
-                      <Link2 className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Live Link</TooltipContent>
-                </Tooltip>
+              <div className="flex min-w-0 flex-1 items-center">
+                <div className="inline-flex h-10 items-center rounded-l-md rounded-r-none border border-input bg-background divide-x divide-border">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={onOpenPreview}
+                        aria-label="Open Preview"
+                        className="h-10 w-10 rounded-none border-0"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Open Preview</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={onLinkViaPreview}
+                        aria-label="Link via Preview"
+                        className="h-10 w-10 rounded-none border-0"
+                      >
+                        <MousePointerClick className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Link via Preview</TooltipContent>
+                  </Tooltip>
+                </div>
+                <InputGroup className="h-10 min-w-0 flex-1 -ml-px">
+                  <InputGroupAddon className="h-10 rounded-none border-r-0 px-0">
+                    <HoverCard>
+                      <HoverCardTrigger asChild>
+                        <button
+                          type="button"
+                          className="flex h-full w-9 items-center justify-center text-muted-foreground"
+                          aria-label="Preview URL info"
+                        >
+                          <Info className="h-4 w-4" />
+                        </button>
+                      </HoverCardTrigger>
+                      <HoverCardContent align="start">
+                        <div className="space-y-2 text-sm">
+                          <div className="font-medium">Preview URL</div>
+                          <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                            <li>Opens Preview / Link via Preview</li>
+                            <li>Mode controls what URL is built (PLU / Facet / Live)</li>
+                            <li>Editing switches to Live</li>
+                          </ul>
+                        </div>
+                      </HoverCardContent>
+                    </HoverCard>
+                  </InputGroupAddon>
+                  <InputGroupAddon className="h-10 rounded-none border-l-0 border-r-0 px-0">
+                    <InputGroupText>https://</InputGroupText>
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    value={previewRestValue}
+                    onChange={(event) => handlePreviewRestChange(event.target.value)}
+                    placeholder="Preview URL"
+                    className="h-10 min-w-0 flex-1 rounded-none px-1 text-xs"
+                  />
+                </InputGroup>
+                <div className="inline-flex h-10 items-center border border-input bg-background -ml-px rounded-l-none rounded-r-md divide-x divide-border">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant={activeLinkMode === "plu" ? "secondary" : "ghost"}
+                        onClick={() => onActiveLinkModeChange?.("plu")}
+                        disabled={!isPluAvailable}
+                        aria-label="PLU Link"
+                        className="h-10 w-10 rounded-none border-0"
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>PLU Link</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant={activeLinkMode === "facet" ? "secondary" : "ghost"}
+                        onClick={() => onActiveLinkModeChange?.("facet")}
+                        disabled={!isFacetAvailable}
+                        aria-label="Facet Link"
+                        className="h-10 w-10 rounded-none border-0"
+                      >
+                        <SlidersHorizontal className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Facet Link</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant={activeLinkMode === "live" ? "secondary" : "ghost"}
+                        onClick={() => onActiveLinkModeChange?.("live")}
+                        disabled={!isLiveAvailable}
+                        aria-label="Live Link"
+                        className="h-10 w-10 rounded-l-none rounded-r-md border-0"
+                      >
+                        <Link2 className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Live Link</TooltipContent>
+                  </Tooltip>
+                </div>
               </div>
             </TooltipProvider>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {previewStatusText ? <span>{previewStatusText}</span> : null}
             {previewExtraControls}
-            {onOpenPreview ? (
-              <Button type="button" size="sm" variant="outline" onClick={onOpenPreview}>
-                Open Preview
-              </Button>
-            ) : null}
-            {onLinkViaPreview ? (
-              <Button type="button" size="sm" variant="outline" onClick={onLinkViaPreview}>
-                Link via Preview
-              </Button>
-            ) : null}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="outline"
-                  onClick={() => onConvertToPlu?.(filteredPluIds)}
-                  disabled={filteredPluIds.length === 0}
-                  aria-label="Convert to PLU Link"
-                >
-                  <ListPlus className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Convert to PLU Link</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant={excludePercentMismatchesEnabled ? "secondary" : "outline"}
-                  disabled={!detectedOfferPercent || detectedOfferPercent <= 0}
-                  aria-pressed={excludePercentMismatchesEnabled}
-                  aria-label="Exclude % mismatches"
-                  onClick={() =>
-                    onExcludePercentMismatchesChange?.(!excludePercentMismatchesEnabled)
-                  }
-                >
-                  <Percent className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {excludePercentMismatchesEnabled
-                  ? "Exclude % mismatches (on)"
-                  : "Exclude % mismatches (off)"}
-              </TooltipContent>
-            </Tooltip>
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3 px-0">
-        <div className="px-6 space-y-2">
-          <Label>Live Link (from Preview)</Label>
-          <Input
-            ref={liveLinkInputRef}
-            value={liveLinkUrl || ""}
-            onChange={(event) => onLiveLinkChange?.(event.target.value)}
-            placeholder="Captured from Preview window"
-            readOnly={!liveLinkEditable}
-          />
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Label className="text-xs text-muted-foreground">Capture mode</Label>
-            <select
-              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-              value={captureMode}
-              onChange={(event) => {
-                const nextMode =
-                  event.target.value === "filters-only" ? "filters-only" : "path+filters"
-                onCaptureModeChange?.(nextMode)
-              }}
-            >
-              <option value="path+filters">Capture path + filters</option>
-              <option value="filters-only">Capture filters only</option>
-            </select>
+        {activeLinkMode === "live" ? (
+          <div className="px-6 space-y-2">
+            <Label>Live Link (from Preview)</Label>
+            <Input
+              ref={liveLinkInputRef}
+              value={liveLinkUrl || ""}
+              onChange={(event) => onLiveLinkChange?.(event.target.value)}
+              placeholder="Captured from Preview window"
+              readOnly={!liveLinkEditable}
+            />
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Label className="text-xs text-muted-foreground">Capture mode</Label>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                value={captureMode}
+                onChange={(event) => {
+                  const nextMode =
+                    event.target.value === "filters-only" ? "filters-only" : "path+filters"
+                  onCaptureModeChange?.(nextMode)
+                }}
+              >
+                <option value="path+filters">Capture path + filters</option>
+                <option value="filters-only">Capture filters only</option>
+              </select>
+            </div>
           </div>
-        </div>
+        ) : null}
         <div className="px-6">
           <div className="space-y-3">
             {pluPanel ? (
@@ -932,7 +980,7 @@ export function FacetMatchesCard({
                 ) : null}
                     </>
                   ) : null}
-                  <div className="shrink-0">
+                  <div className="flex items-center gap-2">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <CollapsibleTrigger asChild>
@@ -952,11 +1000,52 @@ export function FacetMatchesCard({
                         {typeof pluCount === "number" ? ` (${pluCount})` : ""}
                       </TooltipContent>
                     </Tooltip>
+                    {manualBaseActions ? (
+                      <div className="flex items-center gap-2">{manualBaseActions}</div>
+                    ) : null}
+                    {activeLinkMode === "facet" ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            onClick={() => onConvertToPlu?.(filteredPluIds)}
+                            disabled={filteredPluIds.length === 0}
+                            aria-label="Convert to PLU Link"
+                          >
+                            <ListPlus className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Convert to PLU Link</TooltipContent>
+                      </Tooltip>
+                    ) : null}
+                    {activeLinkMode === "plu" || activeLinkMode === "facet" ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant={excludePercentMismatchesEnabled ? "secondary" : "outline"}
+                            disabled={!detectedOfferPercent || detectedOfferPercent <= 0}
+                            aria-pressed={excludePercentMismatchesEnabled}
+                            aria-label="Exclude % mismatches"
+                            onClick={() =>
+                              onExcludePercentMismatchesChange?.(!excludePercentMismatchesEnabled)
+                            }
+                          >
+                            <Percent className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {excludePercentMismatchesEnabled
+                            ? "Exclude % mismatches (on)"
+                            : "Exclude % mismatches (off)"}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : null}
                   </div>
                 </div>
-                {manualBaseActions ? (
-                  <div className="flex flex-wrap items-center gap-2">{manualBaseActions}</div>
-                ) : null}
                   {isFacetMode && !dataset ? (
                     <div className="space-y-2">
                       <p className="text-sm text-muted-foreground">

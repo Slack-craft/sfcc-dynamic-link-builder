@@ -1636,6 +1636,8 @@ export default function CatalogueBuilderPage() {
   async function handleLinkViaPreview() {
     const url = previewUrl
     if (!url) return
+    setDraftActiveLinkMode("live")
+    setDraftUserHasChosenMode(true)
     const startManualFallback = () => {
       window.open(url, "scaPreview", "popup,width=1200,height=800")
       setAwaitingManualLink(true)
@@ -2498,19 +2500,40 @@ export default function CatalogueBuilderPage() {
                                     </span>
                                   </div>
                                 </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor="tile-status">Status</Label>
-                                  <select
-                                    id="tile-status"
-                                    value={draftStatus}
-                                    onChange={(event) => setDraftStatus(event.target.value as TileStatus)}
-                                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                                  >
-                                    <option value="todo">To do</option>
-                                    <option value="in_progress">In progress</option>
-                                    <option value="done">Done</option>
-                                    <option value="needs_review">Needs review</option>
-                                  </select>
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <div className="space-y-2">
+                                    <Label htmlFor="tile-status">Status</Label>
+                                    <select
+                                      id="tile-status"
+                                      value={draftStatus}
+                                      onChange={(event) => setDraftStatus(event.target.value as TileStatus)}
+                                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                                    >
+                                      <option value="todo">To do</option>
+                                      <option value="in_progress">In progress</option>
+                                      <option value="done">Done</option>
+                                      <option value="needs_review">Needs review</option>
+                                    </select>
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Final Dynamic Link</Label>
+                                    <TooltipProvider delayDuration={200}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <div className="h-10 w-full rounded-md border border-input bg-background px-3 text-xs text-muted-foreground flex items-center overflow-hidden">
+                                            <span className="truncate font-mono">
+                                              {activeOutput || "—"}
+                                            </span>
+                                          </div>
+                                        </TooltipTrigger>
+                                        {activeOutput ? (
+                                          <TooltipContent className="max-w-[420px] break-all">
+                                            {activeOutput}
+                                          </TooltipContent>
+                                        ) : null}
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  </div>
                                 </div>
                                 <div className="space-y-2">
                                   <Label htmlFor="tile-notes">Notes</Label>

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { Folder, Link2, List, SlidersHorizontal, Tag } from "lucide-react"
+import { Folder, Tag } from "lucide-react"
 import { BRAND_OPTIONS } from "@/data/brands"
 import type { LinkBuilderOption, LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -1216,6 +1216,33 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           onOpenDatasetPanel={onOpenDatasetPanel}
           manualCategoryControl={manualCategoryControl}
           manualBrandControl={manualBrandControl}
+          previewUrlValue={previewUrlValue}
+          onPreviewUrlChange={onPreviewUrlChange}
+          activeLinkMode={activeLinkMode}
+          onActiveLinkModeChange={onActiveLinkModeChange}
+          isPluAvailable={isPluAvailable}
+          isFacetAvailable={isFacetAvailable}
+          isLiveAvailable={isLiveAvailable}
+          onOpenPreview={onOpenPreview}
+          onLinkViaPreview={onLinkViaPreview}
+          previewStatusText={previewStatusText}
+          previewExtraControls={previewExtraControls}
+          liveLinkUrl={liveLinkUrl}
+          liveLinkEditable={liveLinkEditable}
+          liveLinkInputRef={liveLinkInputRef}
+          onLiveLinkChange={onLiveLinkChange}
+          captureMode={captureMode}
+          onCaptureModeChange={(nextMode) => {
+            setCaptureMode(nextMode)
+            commitState({
+              category,
+              brand,
+              extension,
+              plus,
+              previewPathOverride,
+              captureMode: nextMode,
+            })
+          }}
           pluPanel={pluFieldsPanel}
           pluPanelOpen={pluPanelOpen}
           onPluPanelOpenChange={setPluPanelOpen}
@@ -1228,9 +1255,13 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           onExcludedPluIdsChange={onFacetExcludedPluIdsChange}
           excludePercentMismatchesEnabled={facetExcludePercentEnabled}
           onExcludePercentMismatchesChange={onFacetExcludePercentEnabledChange}
-          onConvertToPlu={convertToPluLink}
+          onConvertToPlu={(pluIds) => {
+            convertToPluLink(pluIds)
+            onActiveLinkModeChange?.("plu")
+          }}
           detectedBrands={detectedBrands}
           detectedOfferPercent={detectedOfferPercent}
+          pluValues={plus}
           onApplyExtension={(query) => {
             const nextExtension = query || ""
             setExtension(nextExtension)
@@ -1247,123 +1278,12 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
 
         {/* Output */}
         <Card className="lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]">
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardHeader>
               <CardTitle>Output</CardTitle>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                {previewStatusText ? <span>{previewStatusText}</span> : null}
-                {previewExtraControls}
-                {onOpenPreview ? (
-                  <Button type="button" size="sm" variant="outline" onClick={onOpenPreview}>
-                    Open Preview
-                  </Button>
-                ) : null}
-                {onLinkViaPreview ? (
-                  <Button type="button" size="sm" variant="outline" onClick={onLinkViaPreview}>
-                    Link via Preview
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <Label>Preview URL</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  value={previewUrlValue || ""}
-                  onChange={(event) => onPreviewUrlChange?.(event.target.value)}
-                  placeholder="Preview URL"
-                  className="min-w-0 flex-1"
-                />
-                <TooltipProvider delayDuration={200}>
-                  <div className="flex items-center gap-2">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant={activeLinkMode === "plu" ? "secondary" : "outline"}
-                          disabled={!isPluAvailable}
-                          onClick={() => onActiveLinkModeChange?.("plu")}
-                          aria-label="PLU Link"
-                        >
-                          <List className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>PLU Link</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant={activeLinkMode === "facet" ? "secondary" : "outline"}
-                          disabled={!isFacetAvailable}
-                          onClick={() => onActiveLinkModeChange?.("facet")}
-                          aria-label="Facet Link"
-                        >
-                          <SlidersHorizontal className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Facet Link</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant={activeLinkMode === "live" ? "secondary" : "outline"}
-                          disabled={!isLiveAvailable}
-                          onClick={() => onActiveLinkModeChange?.("live")}
-                          aria-label="Live Link"
-                        >
-                          <Link2 className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Live Link</TooltipContent>
-                    </Tooltip>
-                  </div>
-                </TooltipProvider>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Live Link (from Preview)</Label>
-              <Input
-                ref={liveLinkInputRef}
-                value={liveLinkUrl || ""}
-                onChange={(event) => onLiveLinkChange?.(event.target.value)}
-                placeholder="Captured from Preview window"
-                readOnly={!liveLinkEditable}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Label className="text-xs text-muted-foreground">Capture mode</Label>
-              <select
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                value={captureMode}
-                onChange={(event) => {
-                  const nextMode =
-                    event.target.value === "filters-only"
-                      ? "filters-only"
-                      : "path+filters"
-                  setCaptureMode(nextMode)
-                  commitState({
-                    category,
-                    brand,
-                    extension,
-                    plus,
-                    previewPathOverride,
-                    captureMode: nextMode,
-                  })
-                }}
-              >
-                <option value="path+filters">Capture path + filters</option>
-                <option value="filters-only">Capture filters only</option>
-              </select>
-            </div>
-            <Label>Generated dynamic link</Label>
-            <Textarea value={outputToShow} readOnly className="min-h-[180px]" />
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Label>Generated dynamic link</Label>
+              <Textarea value={outputToShow} readOnly className="min-h-[180px]" />
 
             <div className="flex flex-wrap gap-2">
               <Button

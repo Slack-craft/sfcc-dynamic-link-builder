@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Check, ChevronDown, List, ListPlus, Percent, SlidersHorizontal, Tags, X } from "lucide-react"
+import { Check, ChevronDown, Link2, List, ListPlus, Percent, SlidersHorizontal, Tags, X } from "lucide-react"
 import type { CsvRow } from "@/lib/catalogueDataset/parseCsv"
 import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
 import { getFacetValue } from "@/lib/catalogueDataset/facets"
@@ -60,6 +60,24 @@ type FacetMatchesCardProps = {
   detectedOfferPercent?: number
   detectedBrands?: string[]
   onApplyExtension: (query: string) => void
+  previewUrlValue?: string
+  onPreviewUrlChange?: (value: string) => void
+  activeLinkMode?: "plu" | "facet" | "live"
+  onActiveLinkModeChange?: (mode: "plu" | "facet" | "live") => void
+  isPluAvailable?: boolean
+  isFacetAvailable?: boolean
+  isLiveAvailable?: boolean
+  onOpenPreview?: () => void
+  onLinkViaPreview?: () => void
+  previewStatusText?: string
+  previewExtraControls?: React.ReactNode
+  liveLinkUrl?: string
+  liveLinkEditable?: boolean
+  liveLinkInputRef?: React.RefObject<HTMLInputElement | null>
+  onLiveLinkChange?: (value: string) => void
+  captureMode?: "path+filters" | "filters-only"
+  onCaptureModeChange?: (mode: "path+filters" | "filters-only") => void
+  pluValues?: string[]
 }
 
 type MultiSelectProps = {
@@ -370,6 +388,24 @@ export function FacetMatchesCard({
   detectedOfferPercent,
   detectedBrands = [],
   onApplyExtension,
+  previewUrlValue,
+  onPreviewUrlChange,
+  activeLinkMode = "plu",
+  onActiveLinkModeChange,
+  isPluAvailable = false,
+  isFacetAvailable = false,
+  isLiveAvailable = false,
+  onOpenPreview,
+  onLinkViaPreview,
+  previewStatusText,
+  previewExtraControls,
+  liveLinkUrl,
+  liveLinkEditable = false,
+  liveLinkInputRef,
+  onLiveLinkChange,
+  captureMode = "path+filters",
+  onCaptureModeChange,
+  pluValues = [],
 }: FacetMatchesCardProps) {
   const setSelectedBrands = onSelectedBrandsChange ?? (() => {})
   const setSelectedArticleTypes = onSelectedArticleTypesChange ?? (() => {})
@@ -450,6 +486,37 @@ export function FacetMatchesCard({
     return buildQueryFromSelections(selected)
   }, [selectedBrands, selectedArticleTypes])
 
+  const normalizedPluValues = useMemo(() => {
+    const seen = new Set<string>()
+    const ordered: string[] = []
+    pluValues.forEach((value) => {
+      const trimmed = value.trim()
+      if (!trimmed) return
+      if (seen.has(trimmed)) return
+      seen.add(trimmed)
+      ordered.push(trimmed)
+    })
+    return ordered
+  }, [pluValues])
+
+  const datasetByPlu = useMemo(() => {
+    const map = new Map<string, CsvRow>()
+    if (!dataset) return map
+    dataset.rowsRef.current.forEach((row) => {
+      const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
+      if (!plu) return
+      if (!map.has(plu)) map.set(plu, row)
+    })
+    return map
+  }, [dataset, dataset?.version])
+
+  const pluPreviewItems = useMemo(() => {
+    return normalizedPluValues.map((plu) => {
+      const row = datasetByPlu.get(plu)
+      return { plu, row: row ?? null, notFound: !row }
+    })
+  }, [datasetByPlu, normalizedPluValues])
+
   const matches = useMemo(() => {
     if (!dataset) {
       return { rows: [] as CsvRow[], count: 0, pluIds: [] as string[] }
@@ -480,6 +547,9 @@ export function FacetMatchesCard({
   const facetColumnCount = dataset?.columnMeta?.facetKeys.length ?? 0
 
   const excludedSet = useMemo(() => new Set(excludedPluIds), [excludedPluIds])
+  const isPluMode = activeLinkMode === "plu"
+  const isFacetMode = activeLinkMode === "facet"
+  const isLiveMode = activeLinkMode === "live"
   const percentMismatchSet = useMemo(() => {
     if (!detectedOfferPercent || detectedOfferPercent <= 0) return new Set<string>()
     const set = new Set<string>()
@@ -495,11 +565,12 @@ export function FacetMatchesCard({
     return set
   }, [detectedOfferPercent, matches.rows])
   const effectiveExcludedSet = useMemo(() => {
+    if (isPluMode) return new Set<string>()
     if (!excludePercentMismatchesEnabled) return excludedSet
     const merged = new Set(excludedSet)
     percentMismatchSet.forEach((plu) => merged.add(plu))
     return merged
-  }, [excludePercentMismatchesEnabled, excludedSet, percentMismatchSet])
+  }, [excludePercentMismatchesEnabled, excludedSet, percentMismatchSet, isPluMode])
   const filteredPluIds = useMemo(
     () => matches.pluIds.filter((plu) => !effectiveExcludedSet.has(plu)),
     [matches.pluIds, effectiveExcludedSet]
@@ -522,6 +593,24 @@ export function FacetMatchesCard({
     })
   }, [matches.rows, effectiveExcludedSet])
   const displayRows = useMemo(() => [...includedRows, ...excludedRows], [includedRows, excludedRows])
+
+  type PreviewItem = { plu: string; row: CsvRow | null; notFound?: boolean }
+
+  const displayItems: PreviewItem[] = useMemo(() => {
+    if (isPluMode) return pluPreviewItems
+    if (isFacetMode)
+      return displayRows.map((row) => {
+        const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
+        return { plu: plu ?? "", row, notFound: false }
+      })
+    return []
+  }, [displayRows, isFacetMode, isPluMode, pluPreviewItems])
+
+  const displayCount = useMemo(() => {
+    if (isPluMode) return pluPreviewItems.length
+    if (isFacetMode) return matches.count
+    return 0
+  }, [isFacetMode, isPluMode, matches.count, pluPreviewItems.length])
 
   function getProductImageUrl(plu: string) {
     return `https://staging.supercheapauto.com.au/dw/image/v2/BBRV_STG/on/demandware.static/-/Sites-srg-internal-master-catalog/default/dwe566580c/images/${plu}/SCA_${plu}_hi-res.jpg?sw=558&sh=558&sm=fit&q=60`
@@ -555,25 +644,26 @@ export function FacetMatchesCard({
   }
 
   const renderCard = useCallback(
-    (row: CsvRow) => {
-      const plu = (row.ID ?? (row as Record<string, string>)["Id"] ?? row.id)?.trim?.()
+    (item: { plu: string; row: CsvRow | null; notFound?: boolean }) => {
+      const plu = item.plu
       if (!plu) return null
-      const imageUrl = getProductImageUrl(plu)
-      const productName = getRowDisplayName(row)
-      const percent = resolvePercentOff(row)
+      const row = item.row
+      const isExcluded = effectiveExcludedSet.has(plu)
+      const productName = row ? getRowDisplayName(row) : "Not found in dataset"
+      const percent = row ? resolvePercentOff(row) : undefined
       const hasOfferPercent =
         Number.isFinite(detectedOfferPercent ?? NaN) && (detectedOfferPercent ?? 0) > 0
       const isMismatch =
         hasOfferPercent && percent !== undefined && percent !== detectedOfferPercent
       const isMatch =
         hasOfferPercent && percent !== undefined && percent === detectedOfferPercent
-      const articleType = getFacetValue(row, "adArticleType", scope)
-      const isExcluded = effectiveExcludedSet.has(plu)
+      const articleType = row ? getFacetValue(row, "adArticleType", scope) : undefined
+      const imageUrl = getProductImageUrl(plu)
 
       return (
         <Card
           className={`h-full overflow-hidden rounded-xl border shadow-sm transition hover:border-muted-foreground/40 hover:shadow-md ${
-            isExcluded ? "opacity-60" : ""
+            !isPluMode && isExcluded ? "opacity-60" : ""
           }`}
         >
           <div className="relative aspect-square bg-muted/30">
@@ -604,34 +694,36 @@ export function FacetMatchesCard({
                 ) : null}
               </Tooltip>
             ) : null}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Exclude product"
-                  className="absolute right-2 top-2 rounded-full bg-background/80 p-1 text-muted-foreground shadow hover:text-foreground"
-                  onClick={() => {
-                    if (isExcluded) {
-                      setExcludedPluIds(excludedPluIds.filter((id) => id !== plu))
-                    } else {
-                      setExcludedPluIds([...excludedPluIds, plu])
-                    }
-                  }}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Exclude</TooltipContent>
-            </Tooltip>
+            {!isPluMode ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Exclude product"
+                    className="absolute right-2 top-2 rounded-full bg-background/80 p-1 text-muted-foreground shadow hover:text-foreground"
+                    onClick={() => {
+                      if (isExcluded) {
+                        setExcludedPluIds(excludedPluIds.filter((id) => id !== plu))
+                      } else {
+                        setExcludedPluIds([...excludedPluIds, plu])
+                      }
+                    }}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Exclude</TooltipContent>
+              </Tooltip>
+            ) : null}
           </div>
           <div className="space-y-1 p-3 text-xs">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {row.brand ?? "-"}
+              {row?.brand ?? (item.notFound ? "Not found" : "-")}
             </div>
             <div className="line-clamp-2 text-sm font-medium leading-snug">
               {productName || "Unnamed product"}
             </div>
-            {isExcluded ? (
+            {!isPluMode && isExcluded ? (
               <div className="text-xs text-muted-foreground">Excluded from Selection</div>
             ) : null}
             <div className="line-clamp-1 text-xs text-muted-foreground">
@@ -642,7 +734,7 @@ export function FacetMatchesCard({
         </Card>
       )
     },
-    [detectedOfferPercent, effectiveExcludedSet, excludedPluIds, scope, setExcludedPluIds]
+    [detectedOfferPercent, effectiveExcludedSet, excludedPluIds, isPluMode, scope, setExcludedPluIds]
   )
 
   return (
@@ -652,29 +744,92 @@ export function FacetMatchesCard({
           <div className="flex flex-wrap items-center gap-3 text-sm font-medium">
             <span>Facet columns detected: {facetColumnCount}</span>
             <span className="text-muted-foreground">
-              Matching products: {matches.count}
+              Matching products: {displayCount}
               {excludedCount > 0 ? ` (${excludedCount} excluded)` : ""}
             </span>
           </div>
-          <div className="flex min-w-0 flex-1 items-center">
-            <Input
-              value={queryPreview}
-              readOnly
-              className="h-8 min-w-0 flex-1 rounded-r-none text-xs"
-              placeholder="No facets selected."
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 rounded-l-none"
-              onClick={() => onApplyExtension(queryPreview)}
-              disabled={!queryPreview}
-            >
-              Apply
-            </Button>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center">
+              <Input
+                value={previewUrlValue || ""}
+                onChange={(event) => onPreviewUrlChange?.(event.target.value)}
+                placeholder="Preview URL"
+                className="h-8 min-w-0 flex-1 rounded-r-none text-xs"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 rounded-l-none"
+                onClick={() => onApplyExtension(queryPreview)}
+                disabled={!queryPreview}
+              >
+                Apply
+              </Button>
+            </div>
+            <TooltipProvider delayDuration={200}>
+              <div className="flex items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant={activeLinkMode === "plu" ? "secondary" : "outline"}
+                      onClick={() => onActiveLinkModeChange?.("plu")}
+                      disabled={!isPluAvailable}
+                      aria-label="PLU Link"
+                    >
+                      <List className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>PLU Link</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant={activeLinkMode === "facet" ? "secondary" : "outline"}
+                      onClick={() => onActiveLinkModeChange?.("facet")}
+                      disabled={!isFacetAvailable}
+                      aria-label="Facet Link"
+                    >
+                      <SlidersHorizontal className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Facet Link</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant={activeLinkMode === "live" ? "secondary" : "outline"}
+                      onClick={() => onActiveLinkModeChange?.("live")}
+                      disabled={!isLiveAvailable}
+                      aria-label="Live Link"
+                    >
+                      <Link2 className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Live Link</TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {previewStatusText ? <span>{previewStatusText}</span> : null}
+            {previewExtraControls}
+            {onOpenPreview ? (
+              <Button type="button" size="sm" variant="outline" onClick={onOpenPreview}>
+                Open Preview
+              </Button>
+            ) : null}
+            {onLinkViaPreview ? (
+              <Button type="button" size="sm" variant="outline" onClick={onLinkViaPreview}>
+                Link via Preview
+              </Button>
+            ) : null}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -716,6 +871,31 @@ export function FacetMatchesCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-3 px-0">
+        <div className="px-6 space-y-2">
+          <Label>Live Link (from Preview)</Label>
+          <Input
+            ref={liveLinkInputRef}
+            value={liveLinkUrl || ""}
+            onChange={(event) => onLiveLinkChange?.(event.target.value)}
+            placeholder="Captured from Preview window"
+            readOnly={!liveLinkEditable}
+          />
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Label className="text-xs text-muted-foreground">Capture mode</Label>
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              value={captureMode}
+              onChange={(event) => {
+                const nextMode =
+                  event.target.value === "filters-only" ? "filters-only" : "path+filters"
+                onCaptureModeChange?.(nextMode)
+              }}
+            >
+              <option value="path+filters">Capture path + filters</option>
+              <option value="filters-only">Capture filters only</option>
+            </select>
+          </div>
+        </div>
         <div className="px-6">
           <div className="space-y-3">
             {pluPanel ? (
@@ -727,46 +907,54 @@ export function FacetMatchesCard({
                   {manualBrandControl ? (
                     <div className="flex-1 min-w-0">{manualBrandControl}</div>
                   ) : null}
-                  <div className="flex-1 min-w-0">
-                    <IconFieldGroup tooltip="Brand (Facet)" icon={<Tags className="h-4 w-4" />}>
-                      <MultiSelect
-                        label="Brand (Facet)"
-                        options={brandOptions}
-                        selected={selectedBrands}
-                        onChange={setSelectedBrands}
-                        placeholder="Select brands"
-                        searchPlaceholder="Search brands"
-                        disabled={!dataset}
-                        triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
-                        previewMaxChars={34}
-                        showLabel={false}
-                        containerClassName="space-y-0"
-                      />
-                    </IconFieldGroup>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <IconFieldGroup tooltip="Article Type" icon={<SlidersHorizontal className="h-4 w-4" />}>
-                      <MultiSelect
-                        label="Article Type"
-                        options={articleTypeOptions}
-                        selected={selectedArticleTypes}
-                        onChange={setSelectedArticleTypes}
-                        disabled={!dataset || selectedBrands.length === 0}
-                        placeholder={
-                          !dataset
-                            ? "Load dataset first"
-                            : selectedBrands.length === 0
-                              ? "Select brand first"
-                              : "Select article types"
-                        }
-                        searchPlaceholder="Search types"
-                        triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
-                        previewMaxChars={40}
-                        showLabel={false}
-                        containerClassName="space-y-0"
-                      />
-                    </IconFieldGroup>
-                  </div>
+                  {isFacetMode ? (
+                    <>
+                {isFacetMode ? (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <IconFieldGroup tooltip="Brand (Facet)" icon={<Tags className="h-4 w-4" />}>
+                        <MultiSelect
+                          label="Brand (Facet)"
+                          options={brandOptions}
+                          selected={selectedBrands}
+                          onChange={setSelectedBrands}
+                          placeholder="Select brands"
+                          searchPlaceholder="Search brands"
+                          disabled={!dataset}
+                          triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
+                          previewMaxChars={34}
+                          showLabel={false}
+                          containerClassName="space-y-0"
+                        />
+                      </IconFieldGroup>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <IconFieldGroup tooltip="Article Type" icon={<SlidersHorizontal className="h-4 w-4" />}>
+                        <MultiSelect
+                          label="Article Type"
+                          options={articleTypeOptions}
+                          selected={selectedArticleTypes}
+                          onChange={setSelectedArticleTypes}
+                          disabled={!dataset || selectedBrands.length === 0}
+                          placeholder={
+                            !dataset
+                              ? "Load dataset first"
+                              : selectedBrands.length === 0
+                                ? "Select brand first"
+                                : "Select article types"
+                          }
+                          searchPlaceholder="Search types"
+                          triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
+                          previewMaxChars={40}
+                          showLabel={false}
+                          containerClassName="space-y-0"
+                        />
+                      </IconFieldGroup>
+                    </div>
+                  </>
+                ) : null}
+                    </>
+                  ) : null}
                   <div className="shrink-0">
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -792,11 +980,11 @@ export function FacetMatchesCard({
                 {manualBaseActions ? (
                   <div className="flex flex-wrap items-center gap-2">{manualBaseActions}</div>
                 ) : null}
-                {!dataset ? (
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">
-                      No dataset loaded for this project.
-                    </p>
+                  {isFacetMode && !dataset ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        No dataset loaded for this project.
+                      </p>
                     {onOpenDatasetPanel ? (
                       <Button type="button" variant="outline" size="sm" onClick={onOpenDatasetPanel}>
                         Open Project Dataset
@@ -860,11 +1048,11 @@ export function FacetMatchesCard({
                 {manualBaseActions ? (
                   <div className="flex flex-wrap items-center gap-2">{manualBaseActions}</div>
                 ) : null}
-                {!dataset ? (
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">
-                      No dataset loaded for this project.
-                    </p>
+            {isFacetMode && !dataset ? (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  No dataset loaded for this project.
+                </p>
                     {onOpenDatasetPanel ? (
                       <Button type="button" variant="outline" size="sm" onClick={onOpenDatasetPanel}>
                         Open Project Dataset
@@ -877,17 +1065,19 @@ export function FacetMatchesCard({
           </div>
         </div>
         {dataset ? (
-          selectedBrands.length === 0 ? (
+          isFacetMode && selectedBrands.length === 0 ? (
             <p className="px-6 text-xs text-muted-foreground">
               Select a brand to preview dataset matches.
             </p>
-          ) : matches.count === 0 ? (
-            <p className="px-6 text-xs text-muted-foreground">No matching products.</p>
+          ) : displayCount === 0 ? (
+            <p className="px-6 text-xs text-muted-foreground">
+              {isPluMode ? "No PLUs to preview." : "No matching products."}
+            </p>
           ) : (
             <TooltipProvider>
               <div className="space-y-4">
                 <VirtualizedProductGrid
-                  items={displayRows}
+                  items={displayItems}
                   renderCard={renderCard}
                   heightClassName="h-[70vh] overflow-hidden"
                 />
@@ -901,8 +1091,8 @@ export function FacetMatchesCard({
 }
 
 type VirtualizedProductGridProps = {
-  items: CsvRow[]
-  renderCard: (row: CsvRow) => React.ReactNode
+  items: Array<{ plu: string; row: CsvRow | null; notFound?: boolean }>
+  renderCard: (item: { plu: string; row: CsvRow | null; notFound?: boolean }) => React.ReactNode
   minColumnWidth?: number
   rowHeight?: number
   heightClassName?: string

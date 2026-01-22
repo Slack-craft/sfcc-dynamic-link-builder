@@ -296,6 +296,27 @@ function buildIdFilter(pluValues: string[]) {
   return `?prefn1=id&prefv1=${joined}`
 }
 
+function buildFacetQueryFromSelections(
+  selectedBrands: string[],
+  selectedArticleTypes: string[]
+) {
+  const selected: Record<string, string[]> = {}
+  if (selectedBrands.length > 0) {
+    selected.brand = selectedBrands
+  }
+  if (selectedArticleTypes.length > 0) {
+    selected.adArticleType = selectedArticleTypes
+  }
+  const entries = Object.entries(selected).filter(([, values]) => values.length > 0)
+  if (entries.length === 0) return ""
+  const params = entries.map(([facetKey, values], index) => {
+    const prefIndex = index + 1
+    const encodedValues = encodeURIComponent(values.join("|"))
+    return `prefn${prefIndex}=${encodeURIComponent(facetKey)}&prefv${prefIndex}=${encodedValues}`
+  })
+  return `?${params.join("&")}&sz=36`
+}
+
 function buildPlusArray(values: string[]) {
   return Array.from({ length: Math.max(MAX_PLUS_FIELDS, values.length) }, (_, index) => {
     return values[index] ?? ""
@@ -311,7 +332,7 @@ function getBrandStub(pathname: string) {
   return match?.[1] ?? ""
 }
 
-function buildDynamicOutputFromState(state: LinkBuilderState) {
+  function buildDynamicOutputFromState(state: LinkBuilderState) {
   const hasExtensionText = state.extension.trim().length > 0
   const extensionQuery = extractQueryOnly(state.extension)
   const extensionValid = !hasExtensionText || extensionQuery.length > 0
@@ -320,6 +341,7 @@ function buildDynamicOutputFromState(state: LinkBuilderState) {
   if (hasExtensionText && !extensionValid) {
     return "Extension is not valid (missing '?'). Paste a URL that includes a query string, or paste query params only."
   }
+
 
   if (!hasExtensionText && cleanedPLUs.length === 1) {
     return `$Url('Product-Show','pid','${cleanedPLUs[0]}')$`
@@ -501,6 +523,10 @@ export default function CatalogueBuilderPage() {
   const [offerTextDebugOpen, setOfferTextDebugOpen] = useState(false)
   const [draftLiveCapturedUrl, setDraftLiveCapturedUrl] = useState("")
   const [draftLinkSource, setDraftLinkSource] = useState<"manual" | "live">("manual")
+  const [draftActiveLinkMode, setDraftActiveLinkMode] = useState<"plu" | "facet" | "live">(
+    "plu"
+  )
+  const [draftUserHasChosenMode, setDraftUserHasChosenMode] = useState(false)
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
   const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
   const [datasetMeta, setDatasetMeta] = useState<DatasetCache | null>(null)
@@ -847,16 +873,90 @@ export default function CatalogueBuilderPage() {
     }
     return []
   }, [selectedTile?.offer?.brand?.label, selectedTile?.offer?.detectedBrands])
-  const manualPreviewUrl = useMemo(
-    () => buildPreviewUrlFromState(draftLinkState, project?.region),
+  const facetQuery = useMemo(
+    () => buildFacetQueryFromSelections(draftFacetBrands, draftFacetArticleTypes),
+    [draftFacetBrands, draftFacetArticleTypes]
+  )
+  const pluCount = useMemo(
+    () => draftLinkState.plus.filter((plu) => plu.trim().length > 0).length,
+    [draftLinkState.plus]
+  )
+  const isPluAvailable = pluCount > 0
+  const isFacetAvailable = facetQuery.length > 0
+  const isLiveAvailable = draftLiveCapturedUrl.trim().length > 0
+
+  const candidatePluUrl = useMemo(
+    () =>
+      buildPreviewUrlFromState(
+        { ...draftLinkState, extension: "" },
+        project?.region
+      ),
     [draftLinkState, project?.region]
   )
-  const previewUrl = useMemo(() => {
-    if (draftLinkSource === "live" && draftLiveCapturedUrl) {
-      return draftLiveCapturedUrl
+  const candidateFacetUrl = useMemo(
+    () =>
+      buildPreviewUrlFromState(
+        { ...draftLinkState, plus: [], extension: facetQuery },
+        project?.region
+      ),
+    [draftLinkState, facetQuery, project?.region]
+  )
+  const candidateLiveUrl = useMemo(
+    () => draftLiveCapturedUrl.trim(),
+    [draftLiveCapturedUrl]
+  )
+
+  useEffect(() => {
+    const availableModes: Array<"plu" | "facet" | "live"> = []
+    if (isPluAvailable) availableModes.push("plu")
+    if (isFacetAvailable) availableModes.push("facet")
+    if (isLiveAvailable) availableModes.push("live")
+
+    if (draftUserHasChosenMode) {
+      if (!availableModes.includes(draftActiveLinkMode)) {
+        const nextMode = availableModes[0] ?? "plu"
+        setDraftActiveLinkMode(nextMode)
+      }
+      return
     }
-    return manualPreviewUrl
-  }, [draftLinkSource, draftLiveCapturedUrl, manualPreviewUrl])
+
+    if (availableModes.includes("plu")) {
+      setDraftActiveLinkMode("plu")
+    } else if (availableModes.includes("facet")) {
+      setDraftActiveLinkMode("facet")
+    } else if (availableModes.includes("live")) {
+      setDraftActiveLinkMode("live")
+    }
+  }, [
+    draftActiveLinkMode,
+    draftUserHasChosenMode,
+    isFacetAvailable,
+    isLiveAvailable,
+    isPluAvailable,
+  ])
+
+  const previewUrl = useMemo(() => {
+    if (draftActiveLinkMode === "live" && candidateLiveUrl) return candidateLiveUrl
+    if (draftActiveLinkMode === "facet") return candidateFacetUrl
+    return candidatePluUrl
+  }, [candidateFacetUrl, candidateLiveUrl, candidatePluUrl, draftActiveLinkMode])
+
+  const activeOutput = useMemo(() => {
+    if (draftActiveLinkMode === "live") {
+      return "Live mode does not convert yet."
+    }
+    if (draftActiveLinkMode === "facet") {
+      return buildDynamicOutputFromState({
+        ...draftLinkState,
+        plus: [],
+        extension: facetQuery,
+      })
+    }
+    return buildDynamicOutputFromState({
+      ...draftLinkState,
+      extension: "",
+    })
+  }, [draftActiveLinkMode, draftLinkState, facetQuery])
 
   function setProjectStage(nextStage: ProjectStage) {
     if (!project) return
@@ -943,10 +1043,15 @@ export default function CatalogueBuilderPage() {
       setDraftLinkState(createEmptyLinkBuilderState())
       setDraftLinkOutput("")
       setDraftExtractedFlags(createEmptyExtractedFlags())
-      setDraftFacetBrands([])
-      setDraftFacetArticleTypes([])
-      setDraftFacetExcludedPluIds([])
-      return
+    setDraftFacetBrands([])
+    setDraftFacetArticleTypes([])
+    setDraftFacetExcludedPluIds([])
+    setDraftFacetExcludePercentEnabled(false)
+    setDraftLiveCapturedUrl("")
+    setDraftLinkSource("manual")
+    setDraftActiveLinkMode("plu")
+    setDraftUserHasChosenMode(false)
+    return
     }
     setDraftTitle(selectedTile.title ?? "")
     setDraftTitleEditedManually(selectedTile.titleEditedManually ?? false)
@@ -957,6 +1062,8 @@ export default function CatalogueBuilderPage() {
     setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
     setDraftLiveCapturedUrl(selectedTile.liveCapturedUrl ?? "")
     setDraftLinkSource(selectedTile.linkSource ?? "manual")
+    setDraftActiveLinkMode(selectedTile.activeLinkMode ?? "plu")
+    setDraftUserHasChosenMode(selectedTile.userHasChosenMode ?? false)
     setDraftFacetBrands(selectedTile.facetBuilder?.selectedBrands ?? [])
     setDraftFacetArticleTypes(selectedTile.facetBuilder?.selectedArticleTypes ?? [])
     setDraftFacetExcludedPluIds(selectedTile.facetBuilder?.excludedPluIds ?? [])
@@ -1044,14 +1151,16 @@ export default function CatalogueBuilderPage() {
 
         const colorKey = await putImage(project.id, file.name, file)
         newImageIds.push(colorKey)
-        tilesToAdd.push({
-          id: uniqueId,
-          tileNumber: uniqueId,
-          status: "todo",
-          notes: undefined,
-          dynamicLink: undefined,
-          linkBuilderState: createEmptyLinkBuilderState(),
-          extractedPluFlags: createEmptyExtractedFlags(),
+    tilesToAdd.push({
+      id: uniqueId,
+      tileNumber: uniqueId,
+      status: "todo",
+      notes: undefined,
+      dynamicLink: undefined,
+      activeLinkMode: "plu",
+      userHasChosenMode: false,
+      linkBuilderState: createEmptyLinkBuilderState(),
+      extractedPluFlags: createEmptyExtractedFlags(),
           facetBuilder: {
             selectedBrands: [],
             selectedArticleTypes: [],
@@ -1234,6 +1343,8 @@ export default function CatalogueBuilderPage() {
       linkSource,
       linkBuilderState: overrides?.linkBuilderState ?? draftLinkState,
       extractedPluFlags: draftExtractedFlags,
+      activeLinkMode: draftActiveLinkMode,
+      userHasChosenMode: draftUserHasChosenMode,
       facetBuilder: {
         selectedBrands: draftFacetBrands,
         selectedArticleTypes: draftFacetArticleTypes,
@@ -1272,6 +1383,8 @@ export default function CatalogueBuilderPage() {
     draftFacetExcludePercentEnabled,
     draftLiveCapturedUrl,
     draftLinkSource,
+    draftActiveLinkMode,
+    draftUserHasChosenMode,
     project,
   ])
 
@@ -1510,6 +1623,8 @@ export default function CatalogueBuilderPage() {
 
   function handleCapturedUrl(finalUrl: string) {
     setDraftLiveCapturedUrl(finalUrl)
+    setDraftActiveLinkMode("live")
+    setDraftUserHasChosenMode(true)
     setPendingCapturedUrl(finalUrl)
     setCaptureDialogOpen(true)
   }
@@ -2428,48 +2543,39 @@ export default function CatalogueBuilderPage() {
                           onLiveLinkChange={setDraftLiveCapturedUrl}
                           liveLinkEditable={extensionStatus !== "available"}
                           liveLinkInputRef={liveLinkInputRef}
+                          previewUrlValue={previewUrl}
+                          onPreviewUrlChange={(value) => {
+                            setDraftLiveCapturedUrl(value)
+                            setDraftActiveLinkMode("live")
+                            setDraftUserHasChosenMode(true)
+                          }}
+                          activeLinkMode={draftActiveLinkMode}
+                          onActiveLinkModeChange={(mode) => {
+                            setDraftActiveLinkMode(mode)
+                            setDraftUserHasChosenMode(true)
+                          }}
+                          isPluAvailable={isPluAvailable}
+                          isFacetAvailable={isFacetAvailable}
+                          isLiveAvailable={isLiveAvailable}
+                          outputOverride={activeOutput}
                           previewUrl={previewUrl}
                           onOpenPreview={handleOpenPreview}
                           onLinkViaPreview={handleLinkViaPreview}
                           previewExtraControls={
-                            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                              <span>
-                                Preview Source: {draftLinkSource === "live" ? "Captured" : "Manual"}
-                              </span>
-                              {draftLinkSource === "live" ? (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setDraftLinkSource("manual")}
-                                >
-                                  Switch to Manual
-                                </Button>
-                              ) : null}
-                              {draftLinkSource === "manual" && draftLiveCapturedUrl ? (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setDraftLinkSource("live")}
-                                >
-                                  Switch to Captured
-                                </Button>
-                              ) : null}
-                              {draftLiveCapturedUrl ? (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => {
-                                    setDraftLiveCapturedUrl("")
-                                    setDraftLinkSource("manual")
-                                  }}
-                                >
-                                  Clear captured link
-                                </Button>
-                              ) : null}
-                            </div>
+                            draftLiveCapturedUrl ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setDraftLiveCapturedUrl("")
+                                  setDraftLinkSource("manual")
+                                  setDraftUserHasChosenMode(false)
+                                }}
+                              >
+                                Clear captured link
+                              </Button>
+                            ) : null
                           }
                           previewStatusText={
                             extensionStatus === "available"
@@ -2494,6 +2600,8 @@ export default function CatalogueBuilderPage() {
                                 onClick={() => {
                                   setCaptureDialogOpen(false)
                                   setPendingCapturedUrl(null)
+                                  setDraftActiveLinkMode("live")
+                                  setDraftUserHasChosenMode(true)
                                 }}
                               >
                                 Capture only
@@ -2515,6 +2623,19 @@ export default function CatalogueBuilderPage() {
                                     setDraftLinkState(nextState)
                                     setDraftLinkOutput(buildDynamicOutputFromState(nextState))
                                     setDraftLinkSource("manual")
+                                    const nextPluCount = nextState.plus.filter((plu) => plu.trim().length > 0).length
+                                    const nextFacetQuery = buildFacetQueryFromSelections(
+                                      draftFacetBrands,
+                                      draftFacetArticleTypes
+                                    )
+                                    if (nextPluCount > 0) {
+                                      setDraftActiveLinkMode("plu")
+                                    } else if (nextFacetQuery) {
+                                      setDraftActiveLinkMode("facet")
+                                    } else {
+                                      setDraftActiveLinkMode("plu")
+                                    }
+                                    setDraftUserHasChosenMode(true)
                                   } else {
                                     toast.warning(warnings[0] ?? "Unable to convert this URL yet.")
                                   }

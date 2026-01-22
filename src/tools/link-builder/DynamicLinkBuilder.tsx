@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { Folder, Tag } from "lucide-react"
+import { Folder, Link2, List, SlidersHorizontal, Tag } from "lucide-react"
 import { BRAND_OPTIONS } from "@/data/brands"
 import type { LinkBuilderOption, LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -330,6 +330,14 @@ type DynamicLinkBuilderProps = {
   onLiveLinkChange?: (value: string) => void
   liveLinkEditable?: boolean
   liveLinkInputRef?: React.RefObject<HTMLInputElement | null>
+  previewUrlValue?: string
+  onPreviewUrlChange?: (value: string) => void
+  activeLinkMode?: "plu" | "facet" | "live"
+  onActiveLinkModeChange?: (mode: "plu" | "facet" | "live") => void
+  isPluAvailable?: boolean
+  isFacetAvailable?: boolean
+  isLiveAvailable?: boolean
+  outputOverride?: string
   previewUrl?: string
   onOpenPreview?: () => void
   onLinkViaPreview?: () => void
@@ -369,6 +377,14 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       onLiveLinkChange,
       liveLinkEditable = false,
       liveLinkInputRef,
+      previewUrlValue,
+      onPreviewUrlChange,
+      activeLinkMode = "plu",
+      onActiveLinkModeChange,
+      isPluAvailable = false,
+      isFacetAvailable = false,
+      isLiveAvailable = false,
+      outputOverride,
       previewUrl,
       onOpenPreview,
       onLinkViaPreview,
@@ -582,6 +598,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     // 5) Base only
     return built
   }, [brand, category, cleanedPLUs, extensionQuery, hasExtensionText, extensionValid, pluCount])
+  const outputToShow = outputOverride ?? output
 
   function commitState(nextState: LinkBuilderState) {
     onChange?.(nextState)
@@ -869,7 +886,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
 
 
   function saveCurrentToHistory() {
-    if (!isSavableOutput(output)) {
+    if (!isSavableOutput(outputToShow)) {
       toast.error("Nothing valid to save yet.")
       return
     }
@@ -877,7 +894,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     const snapshot: SavedLink = {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
-      output,
+      output: outputToShow,
       category,
       brand,
       extension,
@@ -1251,6 +1268,66 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-2">
+              <Label>Preview URL</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={previewUrlValue || ""}
+                  onChange={(event) => onPreviewUrlChange?.(event.target.value)}
+                  placeholder="Preview URL"
+                  className="min-w-0 flex-1"
+                />
+                <TooltipProvider delayDuration={200}>
+                  <div className="flex items-center gap-2">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant={activeLinkMode === "plu" ? "secondary" : "outline"}
+                          disabled={!isPluAvailable}
+                          onClick={() => onActiveLinkModeChange?.("plu")}
+                          aria-label="PLU Link"
+                        >
+                          <List className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>PLU Link</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant={activeLinkMode === "facet" ? "secondary" : "outline"}
+                          disabled={!isFacetAvailable}
+                          onClick={() => onActiveLinkModeChange?.("facet")}
+                          aria-label="Facet Link"
+                        >
+                          <SlidersHorizontal className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Facet Link</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant={activeLinkMode === "live" ? "secondary" : "outline"}
+                          disabled={!isLiveAvailable}
+                          onClick={() => onActiveLinkModeChange?.("live")}
+                          aria-label="Live Link"
+                        >
+                          <Link2 className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Live Link</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </TooltipProvider>
+              </div>
+            </div>
+            <div className="space-y-2">
               <Label>Live Link (from Preview)</Label>
               <Input
                 ref={liveLinkInputRef}
@@ -1286,15 +1363,23 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
               </select>
             </div>
             <Label>Generated dynamic link</Label>
-            <Textarea value={output} readOnly className="min-h-[180px]" />
+            <Textarea value={outputToShow} readOnly className="min-h-[180px]" />
 
             <div className="flex flex-wrap gap-2">
-              <Button type="button" onClick={() => copyText(output)} disabled={!isSavableOutput(output)}>
+              <Button
+                type="button"
+                onClick={() => copyText(outputToShow)}
+                disabled={!isSavableOutput(outputToShow)}
+              >
                 Copy
               </Button>
 
               {showHistory ? (
-                <Button type="button" onClick={saveCurrentToHistory} disabled={!isSavableOutput(output)}>
+                <Button
+                  type="button"
+                  onClick={saveCurrentToHistory}
+                  disabled={!isSavableOutput(outputToShow)}
+                >
                   Save (Ctrl+S)
                 </Button>
               ) : null}

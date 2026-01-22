@@ -33,6 +33,8 @@ export type Tile = {
     excludedPluIds?: string[]
     excludePercentMismatchesEnabled?: boolean
   }
+  activeLinkMode?: "plu" | "facet" | "live"
+  userHasChosenMode?: boolean
   linkSource?: "manual" | "live"
   liveCapturedUrl?: string | null
   imageKey?: string

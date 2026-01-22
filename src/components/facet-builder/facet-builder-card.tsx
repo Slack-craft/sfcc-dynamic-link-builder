@@ -59,7 +59,6 @@ type FacetMatchesCardProps = {
   onConvertToPlu?: (pluIds: string[]) => void
   detectedOfferPercent?: number
   detectedBrands?: string[]
-  onApplyExtension: (query: string) => void
   previewUrlValue?: string
   onPreviewUrlChange?: (value: string) => void
   activeLinkMode?: "plu" | "facet" | "live"
@@ -387,7 +386,6 @@ export function FacetMatchesCard({
   onConvertToPlu,
   detectedOfferPercent,
   detectedBrands = [],
-  onApplyExtension,
   previewUrlValue,
   onPreviewUrlChange,
   activeLinkMode = "plu",
@@ -474,17 +472,6 @@ export function FacetMatchesCard({
     })
     return Array.from(values).sort((a, b) => a.localeCompare(b))
   }, [dataset, selectedBrands, scope])
-
-  const queryPreview = useMemo(() => {
-    const selected: Record<string, string[]> = {}
-    if (selectedBrands.length > 0) {
-      selected.brand = selectedBrands
-    }
-    if (selectedArticleTypes.length > 0) {
-      selected.adArticleType = selectedArticleTypes
-    }
-    return buildQueryFromSelections(selected)
-  }, [selectedBrands, selectedArticleTypes])
 
   const normalizedPluValues = useMemo(() => {
     const seen = new Set<string>()
@@ -754,18 +741,8 @@ export function FacetMatchesCard({
                 value={previewUrlValue || ""}
                 onChange={(event) => onPreviewUrlChange?.(event.target.value)}
                 placeholder="Preview URL"
-                className="h-8 min-w-0 flex-1 rounded-r-none text-xs"
+                className="h-8 min-w-0 flex-1 text-xs"
               />
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-8 rounded-l-none"
-                onClick={() => onApplyExtension(queryPreview)}
-                disabled={!queryPreview}
-              >
-                Apply
-              </Button>
             </div>
             <TooltipProvider delayDuration={200}>
               <div className="flex items-center gap-2">

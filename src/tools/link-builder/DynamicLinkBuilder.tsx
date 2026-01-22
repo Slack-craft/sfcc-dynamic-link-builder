@@ -118,6 +118,27 @@ function buildIdFilter(pluValues: string[]): string {
   return `?prefn1=id&prefv1=${joined}`
 }
 
+function buildFacetQueryFromSelections(
+  selectedBrands: string[],
+  selectedArticleTypes: string[]
+) {
+  const selected: Record<string, string[]> = {}
+  if (selectedBrands.length > 0) {
+    selected.brand = selectedBrands
+  }
+  if (selectedArticleTypes.length > 0) {
+    selected.adArticleType = selectedArticleTypes
+  }
+  const entries = Object.entries(selected).filter(([, values]) => values.length > 0)
+  if (entries.length === 0) return ""
+  const params = entries.map(([facetKey, values], index) => {
+    const prefIndex = index + 1
+    const encodedValues = encodeURIComponent(values.join("|"))
+    return `prefn${prefIndex}=${encodeURIComponent(facetKey)}&prefv${prefIndex}=${encodedValues}`
+  })
+  return `?${params.join("&")}&sz=36`
+}
+
 function isNonEmpty(s: string) {
   return s.trim().length > 0
 }
@@ -465,6 +486,12 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     normalizedInitial.captureMode ?? "path+filters"
   )
   const [pluPanelOpen, setPluPanelOpen] = useState(false)
+  const [pluPanelPref, setPluPanelPref] = useState<{
+    plu?: boolean
+    facet?: boolean
+    live?: boolean
+  }>({})
+  const prevLinkModeRef = useRef<"plu" | "facet" | "live" | null>(null)
 
   // History
   const [savedLinks, setSavedLinks] = useState<SavedLink[]>(() =>
@@ -509,50 +536,69 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
     setPluDrafts(plus)
   }, [plus])
 
+  useEffect(() => {
+    const prevMode = prevLinkModeRef.current
+    if (prevMode === activeLinkMode) return
+    if (activeLinkMode === "plu") {
+      const nextOpen = pluPanelPref.plu ?? true
+      setPluPanelOpen(nextOpen)
+      if (pluPanelPref.plu === undefined) {
+        setPluPanelPref((prev) => ({ ...prev, plu: nextOpen }))
+      }
+    } else if (activeLinkMode === "facet") {
+      const nextOpen = pluPanelPref.facet ?? false
+      setPluPanelOpen(nextOpen)
+      if (pluPanelPref.facet === undefined) {
+        setPluPanelPref((prev) => ({ ...prev, facet: nextOpen }))
+      }
+    } else if (activeLinkMode === "live") {
+      const nextOpen = pluPanelPref.live ?? pluPanelOpen
+      setPluPanelOpen(nextOpen)
+      if (pluPanelPref.live === undefined) {
+        setPluPanelPref((prev) => ({ ...prev, live: nextOpen }))
+      }
+    }
+    prevLinkModeRef.current = activeLinkMode
+  }, [activeLinkMode, pluPanelOpen, pluPanelPref])
+
+  function handlePluPanelOpenChange(nextOpen: boolean) {
+    setPluPanelOpen(nextOpen)
+    if (activeLinkMode === "plu") {
+      setPluPanelPref((prev) => ({ ...prev, plu: nextOpen }))
+    } else if (activeLinkMode === "facet") {
+      setPluPanelPref((prev) => ({ ...prev, facet: nextOpen }))
+    } else if (activeLinkMode === "live") {
+      setPluPanelPref((prev) => ({ ...prev, live: nextOpen }))
+    }
+  }
+
   // Derived values
   const anyPLU = useMemo(() => plus.some((p) => isNonEmpty(p)), [plus])
   const cleanedPLUs = useMemo(() => plus.map((p) => p.trim()).filter((p) => p.length > 0), [plus])
   const pluCount = cleanedPLUs.length
 
-  const extensionQuery = useMemo(() => extractQueryString(extension), [extension])
-  const hasExtensionText = isNonEmpty(extension)
-  const extensionValid = !hasExtensionText || isNonEmpty(extensionQuery)
-
   // Disable rules
   const brandDisabled = category !== null
   const categoryDisabled = brand !== null
 
-  const extensionDisabled = anyPLU
-  const pluDisabled = extensionValid && hasExtensionText // only lock PLUs when extension is usable
+  const extensionDisabled = false
+  const pluDisabled = false
 
   function buildOutputFromState(state: LinkBuilderState) {
-    const hasExtensionTextLocal = isNonEmpty(state.extension)
-    const extensionQueryLocal = extractQueryString(state.extension)
-    const extensionValidLocal =
-      !hasExtensionTextLocal || isNonEmpty(extensionQueryLocal)
     const cleanedPLUsLocal = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
     const pluCountLocal = cleanedPLUsLocal.length
 
-    if (hasExtensionTextLocal && !extensionValidLocal) {
-      return "Extension is not valid (missing '?'). Paste a URL that includes a query string, or paste query params only."
-    }
-
-    if (!hasExtensionTextLocal && pluCountLocal === 1) {
+    if (pluCountLocal === 1) {
       return `$Url('Product-Show','pid','${cleanedPLUsLocal[0]}')$`
     }
 
     const baseValue = state.category?.value ?? state.brand?.value ?? ""
     if (!baseValue) {
-      if (pluCountLocal > 1 || hasExtensionTextLocal) return "Select a Category or Brand to generate the base link."
+      if (pluCountLocal > 1) return "Select a Category or Brand to generate the base link."
       return "Select a Category or Brand, or enter one PLU to generate a Product link."
     }
 
     let built = `$Url('Search-Show','cgid','${baseValue}')$`
-
-    if (isNonEmpty(extensionQueryLocal)) {
-      built += extensionQueryLocal
-      return built
-    }
 
     if (pluCountLocal > 1) {
       built += buildIdFilter(cleanedPLUsLocal)
@@ -564,30 +610,19 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
 
   // Output building
   const output = useMemo(() => {
-    // Invalid extension
-    if (hasExtensionText && !extensionValid) {
-      return "Extension is not valid (missing '?'). Paste a URL that includes a query string, or paste query params only."
-    }
-
-    // 1) If exactly one PLU and no extension -> Product-Show
-    if (!hasExtensionText && pluCount === 1) {
+    // 1) If exactly one PLU -> Product-Show
+    if (pluCount === 1) {
       return `$Url('Product-Show','pid','${cleanedPLUs[0]}')$`
     }
 
     // 2) Otherwise Search-Show mode with base cgid
     const baseValue = category?.value ?? brand?.value ?? ""
     if (!baseValue) {
-      if (pluCount > 1 || hasExtensionText) return "Select a Category or Brand to generate the base link."
+      if (pluCount > 1) return "Select a Category or Brand to generate the base link."
       return "Select a Category or Brand, or enter one PLU to generate a Product link."
     }
 
     let built = `$Url('Search-Show','cgid','${baseValue}')$`
-
-    // 3) Append extension query string if present
-    if (isNonEmpty(extensionQuery)) {
-      built += extensionQuery
-      return built
-    }
 
     // 4) Otherwise, if multiple PLUs exist, append id filter
     if (pluCount > 1) {
@@ -597,7 +632,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
 
     // 5) Base only
     return built
-  }, [brand, category, cleanedPLUs, extensionQuery, hasExtensionText, extensionValid, pluCount])
+  }, [brand, category, cleanedPLUs, pluCount])
   const outputToShow = outputOverride ?? output
 
   function commitState(nextState: LinkBuilderState) {
@@ -1199,11 +1234,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                   disabled={extensionDisabled}
                 />
 
-                {hasExtensionText && !extensionValid ? (
-                  <p className="text-sm text-destructive">
-                    Extension must include a <code>?</code> (or be query params like <code>prefn1=...&prefv1=...</code>).
-                  </p>
-                ) : null}
+                
               </div>
 
             </div>
@@ -1245,7 +1276,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           }}
           pluPanel={pluFieldsPanel}
           pluPanelOpen={pluPanelOpen}
-          onPluPanelOpenChange={setPluPanelOpen}
+          onPluPanelOpenChange={handlePluPanelOpenChange}
           pluCount={pluCount}
           selectedBrands={facetSelectedBrands}
           selectedArticleTypes={facetSelectedArticleTypes}
@@ -1317,7 +1348,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
                 </span>{" "}
                 and{" "}
                 <span className="font-medium">
-                  {hasExtensionText ? (extensionValid ? "Extension" : "Invalid extension") : pluCount ? `${pluCount} PLU(s)` : "No refinement"}
+                  {pluCount ? `${pluCount} PLU(s)` : "No refinement"}
                 </span>
               </p>
             </div>

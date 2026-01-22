@@ -332,32 +332,24 @@ function getBrandStub(pathname: string) {
   return match?.[1] ?? ""
 }
 
-  function buildDynamicOutputFromState(state: LinkBuilderState) {
-  const hasExtensionText = state.extension.trim().length > 0
-  const extensionQuery = extractQueryOnly(state.extension)
-  const extensionValid = !hasExtensionText || extensionQuery.length > 0
+function buildDynamicOutputFromState(state: LinkBuilderState, derivedQuery = "") {
   const cleanedPLUs = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
 
-  if (hasExtensionText && !extensionValid) {
-    return "Extension is not valid (missing '?'). Paste a URL that includes a query string, or paste query params only."
-  }
-
-
-  if (!hasExtensionText && cleanedPLUs.length === 1) {
+  if (cleanedPLUs.length === 1 && !derivedQuery) {
     return `$Url('Product-Show','pid','${cleanedPLUs[0]}')$`
   }
 
   const baseValue = state.category?.value ?? state.brand?.value ?? ""
   if (!baseValue) {
-    if (cleanedPLUs.length > 1 || hasExtensionText) {
+    if (cleanedPLUs.length > 1 || derivedQuery) {
       return "Select a Category or Brand to generate the base link."
     }
     return "Select a Category or Brand, or enter one PLU to generate a Product link."
   }
 
   let built = `$Url('Search-Show','cgid','${baseValue}')$`
-  if (extensionQuery) {
-    built += extensionQuery
+  if (derivedQuery) {
+    built += derivedQuery
     return built
   }
   if (cleanedPLUs.length > 1) {
@@ -367,17 +359,20 @@ function getBrandStub(pathname: string) {
   return built
 }
 
-function buildPreviewUrlFromState(state: LinkBuilderState, scope?: Region) {
+function buildPreviewUrlFromState(
+  state: LinkBuilderState,
+  scope?: Region,
+  derivedQuery = "",
+  ignorePlu = false
+) {
   const domain =
     scope === "NZ"
       ? "https://staging.supercheapauto.co.nz"
       : "https://staging.supercheapauto.com.au"
 
-  const extensionQuery = extractQueryOnly(state.extension)
   const cleanedPLUs = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
-  const hasExtensionText = state.extension.trim().length > 0
-  const isSinglePlu = !hasExtensionText && cleanedPLUs.length === 1
-  const isMultiPlu = cleanedPLUs.length > 1
+  const isSinglePlu = !ignorePlu && cleanedPLUs.length === 1
+  const isMultiPlu = !ignorePlu && cleanedPLUs.length > 1
 
   if (isSinglePlu) {
     return `${domain}/p/sca-product/${cleanedPLUs[0]}.html`
@@ -397,11 +392,11 @@ function buildPreviewUrlFromState(state: LinkBuilderState, scope?: Region) {
   }
 
   if (derivedPath) {
-    return `${domain}${derivedPath}${extensionQuery}`
+    return `${domain}${derivedPath}${derivedQuery}`
   }
 
-  if (extensionQuery) {
-    return `${domain}${extensionQuery}`
+  if (derivedQuery) {
+    return `${domain}${derivedQuery}`
   }
 
   return domain
@@ -886,19 +881,11 @@ export default function CatalogueBuilderPage() {
   const isLiveAvailable = draftLiveCapturedUrl.trim().length > 0
 
   const candidatePluUrl = useMemo(
-    () =>
-      buildPreviewUrlFromState(
-        { ...draftLinkState, extension: "" },
-        project?.region
-      ),
+    () => buildPreviewUrlFromState(draftLinkState, project?.region, ""),
     [draftLinkState, project?.region]
   )
   const candidateFacetUrl = useMemo(
-    () =>
-      buildPreviewUrlFromState(
-        { ...draftLinkState, plus: [], extension: facetQuery },
-        project?.region
-      ),
+    () => buildPreviewUrlFromState(draftLinkState, project?.region, facetQuery, true),
     [draftLinkState, facetQuery, project?.region]
   )
   const candidateLiveUrl = useMemo(
@@ -941,22 +928,22 @@ export default function CatalogueBuilderPage() {
     return candidatePluUrl
   }, [candidateFacetUrl, candidateLiveUrl, candidatePluUrl, draftActiveLinkMode])
 
-  const activeOutput = useMemo(() => {
-    if (draftActiveLinkMode === "live") {
-      return "Live mode does not convert yet."
+  function computeOutputForMode(
+    state: LinkBuilderState,
+    mode: "plu" | "facet" | "live",
+    query: string
+  ) {
+    if (mode === "live") return "Live mode does not convert yet."
+    if (mode === "facet") {
+      return buildDynamicOutputFromState({ ...state, plus: [] }, query)
     }
-    if (draftActiveLinkMode === "facet") {
-      return buildDynamicOutputFromState({
-        ...draftLinkState,
-        plus: [],
-        extension: facetQuery,
-      })
-    }
-    return buildDynamicOutputFromState({
-      ...draftLinkState,
-      extension: "",
-    })
-  }, [draftActiveLinkMode, draftLinkState, facetQuery])
+    return buildDynamicOutputFromState(state, "")
+  }
+
+  const activeOutput = useMemo(
+    () => computeOutputForMode(draftLinkState, draftActiveLinkMode, facetQuery),
+    [draftActiveLinkMode, draftLinkState, facetQuery]
+  )
 
   function setProjectStage(nextStage: ProjectStage) {
     if (!project) return
@@ -1470,14 +1457,12 @@ export default function CatalogueBuilderPage() {
       return
     }
 
-    const capturedSearch = parsed.search ?? ""
     const pathname = parsed.pathname ?? ""
     const captureMode = draftLinkState.captureMode ?? "path+filters"
     const cleanedPLUs = draftLinkState.plus
       .map((p) => p.trim())
       .filter((p) => p.length > 0)
-    const hasExtensionText = draftLinkState.extension.trim().length > 0
-    const isSinglePlu = !hasExtensionText && cleanedPLUs.length === 1
+    const isSinglePlu = cleanedPLUs.length === 1
     const isMultiPlu = cleanedPLUs.length > 1
     const manualBaseMode = !isSinglePlu && !isMultiPlu
 
@@ -1485,10 +1470,6 @@ export default function CatalogueBuilderPage() {
 
     const nextState: LinkBuilderState = {
       ...draftLinkState,
-    }
-
-    if (capturedSearch) {
-      nextState.extension = capturedSearch
     }
 
     if (pathname === "/catalogue-out-now") {
@@ -1513,7 +1494,9 @@ export default function CatalogueBuilderPage() {
     }
 
     setDraftLinkState(nextState)
-    setDraftLinkOutput(buildDynamicOutputFromState(nextState))
+    setDraftLinkOutput(
+      computeOutputForMode(nextState, draftActiveLinkMode, facetQuery)
+    )
   }
 
   function convertCapturedUrlToBuilderState(
@@ -1528,23 +1511,21 @@ export default function CatalogueBuilderPage() {
     }
 
     const pathname = parsed.pathname ?? ""
-    const capturedSearch = parsed.search ?? ""
     const params = new URLSearchParams(parsed.search)
 
     const productMatch = pathname.match(/\/p\/[^/]+\/(\d{4,8})\.html/i)
     if (productMatch) {
       const plu = productMatch[1]
-      return {
-        nextState: {
-          ...currentState,
-          category: null,
-          brand: null,
-          extension: "",
-          plus: buildPlusArray([plu]),
-          previewPathOverride: "",
-        },
-        didConvert: true,
-        warnings: [],
+        return {
+          nextState: {
+            ...currentState,
+            category: null,
+            brand: null,
+            plus: buildPlusArray([plu]),
+            previewPathOverride: "",
+          },
+          didConvert: true,
+          warnings: [],
       }
     }
 
@@ -1560,15 +1541,14 @@ export default function CatalogueBuilderPage() {
           currentState.category || currentState.brand
             ? currentState
             : { ...currentState, category: { label: "Catalog", value: "catalogue-onsale" } }
-        return {
-          nextState: {
-            ...baseState,
-            extension: "",
-            plus: buildPlusArray(parsedPlus),
-            previewPathOverride: "",
-          },
-          didConvert: true,
-          warnings: [],
+          return {
+            nextState: {
+              ...baseState,
+              plus: buildPlusArray(parsedPlus),
+              previewPathOverride: "",
+            },
+            didConvert: true,
+            warnings: [],
         }
       }
     }
@@ -1579,7 +1559,6 @@ export default function CatalogueBuilderPage() {
           ...currentState,
           category: { label: "Catalog", value: "catalogue-onsale" },
           brand: null,
-          extension: capturedSearch,
           plus: buildPlusArray([]),
           previewPathOverride: "/catalogue-out-now",
         },
@@ -1600,16 +1579,15 @@ export default function CatalogueBuilderPage() {
           warnings: ["Unable to map brand from captured URL."],
         }
       }
-      return {
-        nextState: {
-          ...currentState,
-          brand: match,
-          category: null,
-          extension: capturedSearch,
-          plus: buildPlusArray([]),
-          previewPathOverride: pathname,
-        },
-        didConvert: true,
+        return {
+          nextState: {
+            ...currentState,
+            brand: match,
+            category: null,
+            plus: buildPlusArray([]),
+            previewPathOverride: pathname,
+          },
+          didConvert: true,
         warnings: [],
       }
     }
@@ -2621,7 +2599,13 @@ export default function CatalogueBuilderPage() {
                                     )
                                   if (didConvert) {
                                     setDraftLinkState(nextState)
-                                    setDraftLinkOutput(buildDynamicOutputFromState(nextState))
+                                    setDraftLinkOutput(
+                                      computeOutputForMode(
+                                        nextState,
+                                        draftActiveLinkMode,
+                                        facetQuery
+                                      )
+                                    )
                                     setDraftLinkSource("manual")
                                     const nextPluCount = nextState.plus.filter((plu) => plu.trim().length > 0).length
                                     const nextFacetQuery = buildFacetQueryFromSelections(

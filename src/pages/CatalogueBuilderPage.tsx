@@ -2215,6 +2215,41 @@ export default function CatalogueBuilderPage() {
             </form>
           </CardContent>
         </Card>
+        <Dialog open={datasetImportOpen} onOpenChange={setDatasetImportOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Import Project Data</DialogTitle>
+              <DialogDescription>
+                Imports into local storage on this machine.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <Label htmlFor="project-import-file">Project export (.zip)</Label>
+              <Input
+                id="project-import-file"
+                ref={datasetImportRef}
+                type="file"
+                accept=".zip"
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDatasetImportOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleImportProjectData}
+                disabled={datasetImporting}
+              >
+                {datasetImporting ? "Importing..." : "Import"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     )
   }

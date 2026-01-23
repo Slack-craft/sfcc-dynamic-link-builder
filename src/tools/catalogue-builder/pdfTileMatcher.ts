@@ -4,9 +4,10 @@ import type {
   PDFPageProxy,
   TextContent,
 } from "pdfjs-dist/types/src/display/api"
-import PdfWorker from "pdfjs-dist/build/pdf.worker?worker"
-
-GlobalWorkerOptions.workerPort = new PdfWorker()
+GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url
+).toString()
 
 export type MatchRect = {
   x: number
@@ -37,7 +38,7 @@ export async function renderPdfPageToCanvas(
   if (!ctx) {
     throw new Error("Canvas 2D context not available")
   }
-  await page.render({ canvasContext: ctx, viewport }).promise
+  await page.render({ canvasContext: ctx, viewport, canvas }).promise
   return viewport
 }
 
@@ -101,7 +102,6 @@ async function tileBlobToGrayscale(
 function sadScore(
   page: Uint8Array,
   pageW: number,
-  pageH: number,
   tile: Uint8Array,
   tileW: number,
   tileH: number,
@@ -139,7 +139,7 @@ function searchBestMatch(
   let bestY = startY
   for (let y = startY; y <= maxY; y += step) {
     for (let x = startX; x <= maxX; x += step) {
-      const score = sadScore(page, pageW, pageH, tile, tileW, tileH, x, y)
+      const score = sadScore(page, pageW, tile, tileW, tileH, x, y)
       if (score < bestScore) {
         bestScore = score
         bestX = x

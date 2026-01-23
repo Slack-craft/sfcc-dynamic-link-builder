@@ -114,18 +114,6 @@ type MultiSelectProps = {
   containerClassName?: string
 }
 
-function buildQueryFromSelections(selected: Record<string, string[]>) {
-  const entries = Object.entries(selected).filter(([, values]) => values.length > 0)
-  if (entries.length === 0) return ""
-  const params = entries.map(([facetKey, values], index) => {
-    const prefIndex = index + 1
-    const outputKey = facetKey === "brand" ? "srgBrand" : facetKey
-    const encodedValues = encodeURIComponent(values.join("|"))
-    return `prefn${prefIndex}=${encodeURIComponent(outputKey)}&prefv${prefIndex}=${encodedValues}`
-  })
-  return `?${params.join("&")}&sz=36`
-}
-
 function normalizeBrand(value: string) {
   return value
     .toLowerCase()
@@ -198,14 +186,12 @@ function useResponsiveSelectionPreview(params: {
       }
 
       let best = ""
-      let bestRemaining = items.length
       for (let i = 1; i <= items.length; i += 1) {
         const remaining = items.length - i
         const prefix = items.slice(0, i).join(", ")
         const suffix = remaining > 0 ? ` ${suffixFor(remaining)}` : ""
         if (measure(prefix + suffix) <= maxWidth) {
           best = prefix + suffix
-          bestRemaining = remaining
         } else {
           break
         }
@@ -567,7 +553,6 @@ export function FacetMatchesCard({
   const excludedSet = useMemo(() => new Set(excludedPluIds), [excludedPluIds])
   const isPluMode = activeLinkMode === "plu"
   const isFacetMode = activeLinkMode === "facet"
-  const isLiveMode = activeLinkMode === "live"
   const percentMismatchSet = useMemo(() => {
     if (!detectedOfferPercent || detectedOfferPercent <= 0) return new Set<string>()
     const set = new Set<string>()

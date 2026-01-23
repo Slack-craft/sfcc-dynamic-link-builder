@@ -100,31 +100,6 @@ function buildIdFilter(pluValues: string[]): string {
   return `?prefn1=id&prefv1=${joined}`
 }
 
-function buildFacetQueryFromSelections(
-  selectedBrands: string[],
-  selectedArticleTypes: string[]
-) {
-  const selected: Record<string, string[]> = {}
-  if (selectedBrands.length > 0) {
-    selected.brand = selectedBrands
-  }
-  if (selectedArticleTypes.length > 0) {
-    selected.adArticleType = selectedArticleTypes
-  }
-  const entries = Object.entries(selected).filter(([, values]) => values.length > 0)
-  if (entries.length === 0) return ""
-  const params = entries.map(([facetKey, values], index) => {
-    const prefIndex = index + 1
-    const encodedValues = encodeURIComponent(values.join("|"))
-    return `prefn${prefIndex}=${encodeURIComponent(facetKey)}&prefv${prefIndex}=${encodedValues}`
-  })
-  return `?${params.join("&")}&sz=36`
-}
-
-function isNonEmpty(s: string) {
-  return s.trim().length > 0
-}
-
 function isSavableOutput(output: string) {
   // We only save actual dynamic links, not guidance/error strings
   return output.startsWith("$Url(")
@@ -342,7 +317,6 @@ type DynamicLinkBuilderProps = {
   isFacetAvailable?: boolean
   isLiveAvailable?: boolean
   outputOverride?: string
-  previewUrl?: string
   onOpenPreview?: () => void
   onLinkViaPreview?: () => void
   previewStatusText?: string
@@ -390,7 +364,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       isFacetAvailable = false,
       isLiveAvailable = false,
       outputOverride,
-      previewUrl,
       onOpenPreview,
       onLinkViaPreview,
       previewStatusText,
@@ -554,7 +527,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
   }
 
   // Derived values
-  const anyPLU = useMemo(() => plus.some((p) => isNonEmpty(p)), [plus])
   const cleanedPLUs = useMemo(() => plus.map((p) => p.trim()).filter((p) => p.length > 0), [plus])
   const pluCount = cleanedPLUs.length
 

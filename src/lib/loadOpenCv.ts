@@ -11,7 +11,7 @@ export function loadOpenCv(): Promise<void> {
     }
 
     const log = (...args: unknown[]) => {
-      if (import.meta.env.DEV) {
+      if ((import.meta as any).env?.DEV) {
         // eslint-disable-next-line no-console
         console.log(...args)
       }

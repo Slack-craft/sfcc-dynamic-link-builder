@@ -278,19 +278,6 @@ function slugifyLabel(value: string) {
     .replace(/^-|-$/g, "")
 }
 
-function extractQueryOnly(input: string) {
-  const trimmed = input.trim()
-  if (!trimmed) return ""
-  if (trimmed.startsWith("?")) return trimmed
-  try {
-    const parsed = new URL(trimmed)
-    return parsed.search || ""
-  } catch {
-    const index = trimmed.indexOf("?")
-    return index >= 0 ? trimmed.slice(index) : ""
-  }
-}
-
 function buildIdFilter(pluValues: string[]) {
   const joined = pluValues.join("%7c")
   return `?prefn1=id&prefv1=${joined}`
@@ -1459,56 +1446,6 @@ export default function CatalogueBuilderPage() {
     }
   }, [awaitingManualLink])
 
-  function applyCapturedUrl(finalUrl: string) {
-    let parsed: URL
-    try {
-      parsed = new URL(finalUrl)
-    } catch {
-      return
-    }
-
-    const pathname = parsed.pathname ?? ""
-    const captureMode = draftLinkState.captureMode ?? "path+filters"
-    const cleanedPLUs = draftLinkState.plus
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0)
-    const isSinglePlu = cleanedPLUs.length === 1
-    const isMultiPlu = cleanedPLUs.length > 1
-    const manualBaseMode = !isSinglePlu && !isMultiPlu
-
-    if (!manualBaseMode) return
-
-    const nextState: LinkBuilderState = {
-      ...draftLinkState,
-    }
-
-    if (pathname === "/catalogue-out-now") {
-      nextState.category = { label: "Catalog", value: "catalogue-onsale" }
-      if (captureMode === "path+filters") {
-        nextState.previewPathOverride = "/catalogue-out-now"
-      }
-    }
-
-    if (captureMode === "path+filters") {
-      if (isBrandPath(pathname)) {
-        nextState.previewPathOverride = pathname
-        const stub = getBrandStub(pathname)
-        const match = BRAND_OPTIONS.find(
-          (option) => slugifyLabel(option.label) === stub
-        )
-        if (match) {
-          nextState.brand = match
-          nextState.category = null
-        }
-      }
-    }
-
-    setDraftLinkState(nextState)
-    setDraftLinkOutput(
-      computeOutputForMode(nextState, draftActiveLinkMode, facetQuery)
-    )
-  }
-
   function convertCapturedUrlToBuilderState(
     finalUrl: string,
     currentState: LinkBuilderState
@@ -2602,7 +2539,6 @@ export default function CatalogueBuilderPage() {
                           isFacetAvailable={isFacetAvailable}
                           isLiveAvailable={isLiveAvailable}
                           outputOverride={activeOutput}
-                          previewUrl={previewUrl}
                           onOpenPreview={handleOpenPreview}
                           onLinkViaPreview={handleLinkViaPreview}
                           previewExtraControls={

@@ -332,7 +332,6 @@ export default function LinkBuilderPage() {
       onLiveLinkChange={setLiveLinkUrl}
         liveLinkEditable={extensionStatus !== "available"}
         liveLinkInputRef={liveLinkInputRef}
-        previewUrl={previewUrl}
         onOpenPreview={handleOpenPreview}
         onLinkViaPreview={handleLinkViaPreview}
         previewStatusText={

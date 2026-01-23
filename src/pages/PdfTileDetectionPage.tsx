@@ -128,7 +128,7 @@ export default function PdfTileDetectionPage({
 
   function selectRectIndex(next: number | null, reason: string) {
     setSelectedRectIndex((prev) => {
-      if (prev !== next && import.meta.env.DEV) {
+      if (prev !== next && (import.meta as any).env?.DEV) {
         // eslint-disable-next-line no-console
         console.log("[selectRect]", { reason, prev, next, stack: new Error().stack })
       }

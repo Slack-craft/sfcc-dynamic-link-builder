@@ -52,7 +52,9 @@ import { clearImagesForProject, getImage, putImage } from "@/tools/catalogue-bui
 import {
   deleteAssetsForProject,
   getAsset,
+  listAssets,
   putAsset,
+  putAssetRecord,
   putProjectDataset,
   getProjectDataset,
   deleteProjectDataset,
@@ -66,6 +68,7 @@ import { extensionRequest } from "@/lib/preview/extensionRequest"
 import { hasExtensionPing } from "@/lib/preview/hasExtension"
 import { parseCsvText, type CsvRow } from "@/lib/catalogueDataset/parseCsv"
 import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
+import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransfer"
  
 import type {
   CatalogueProject,
@@ -526,6 +529,8 @@ export default function CatalogueBuilderPage() {
   const [datasetUploadOpen, setDatasetUploadOpen] = useState(false)
   const [datasetDetailsOpen, setDatasetDetailsOpen] = useState(false)
   const [datasetClearOpen, setDatasetClearOpen] = useState(false)
+  const [datasetImportOpen, setDatasetImportOpen] = useState(false)
+  const [datasetImporting, setDatasetImporting] = useState(false)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
   const [extensionStatus, setExtensionStatus] = useState<
     "unknown" | "available" | "unavailable"
@@ -535,6 +540,7 @@ export default function CatalogueBuilderPage() {
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const datasetInputRef = useRef<HTMLInputElement | null>(null)
+  const datasetImportRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
   const lastUploadSignatureRef = useRef<string | null>(null)
 
@@ -1281,6 +1287,92 @@ export default function CatalogueBuilderPage() {
     anchor.click()
     anchor.remove()
     URL.revokeObjectURL(url)
+  }
+
+  async function handleExportProjectData() {
+    if (!project) return
+    try {
+      const assets = await listAssets(project.id)
+      const datasetRecord = project.dataset
+        ? await getProjectDataset(getDatasetKey(project.id, project.dataset.id))
+        : undefined
+      const blob = await exportProjectToZip({
+        project,
+        assets,
+        dataset: datasetRecord,
+      })
+      const safeName = project.name.replace(/[^a-z0-9_-]+/gi, "_")
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[:.]/g, "")
+        .slice(0, 15)
+      const filename = `catalogue_link_builder_export_${safeName}_${timestamp}.zip`
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+      toast.success("Project export ready.")
+    } catch (error) {
+      toast.error("Failed to export project data.")
+    }
+  }
+
+  async function handleImportProjectData() {
+    if (!datasetImportRef.current?.files?.[0]) return
+    const file = datasetImportRef.current.files[0]
+    setDatasetImporting(true)
+    try {
+      const { manifest, assetBlobs, datasetCsv } = await importProjectFromZip(file)
+      const newProjectId = crypto.randomUUID()
+      const now = new Date().toISOString()
+      const imported: CatalogueProject = {
+        ...manifest.project,
+        id: newProjectId,
+        createdAt: now,
+        updatedAt: now,
+      }
+
+      if (imported.dataset && datasetCsv) {
+        const datasetKey = getDatasetKey(newProjectId, imported.dataset.id)
+        await putProjectDataset(
+          datasetKey,
+          newProjectId,
+          imported.dataset.filename,
+          datasetCsv
+        )
+      } else {
+        imported.dataset = null
+      }
+
+      for (const assetMeta of manifest.assets) {
+        const blob = assetBlobs.get(assetMeta.assetId)
+        if (!blob) continue
+        await putAssetRecord({
+          assetId: assetMeta.assetId,
+          projectId: newProjectId,
+          type: assetMeta.type,
+          name: assetMeta.name,
+          blob,
+          createdAt: assetMeta.createdAt,
+        })
+      }
+
+      setProjectsState((prev) => ({
+        activeProjectId: newProjectId,
+        projects: [...prev.projects, imported],
+      }))
+      datasetImportRef.current.value = ""
+      setDatasetImportOpen(false)
+      toast.success(`Imported project: ${imported.name}`)
+    } catch (error) {
+      toast.error("Failed to import project data.")
+    } finally {
+      setDatasetImporting(false)
+    }
   }
 
   function handleUploadChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -2208,6 +2300,14 @@ export default function CatalogueBuilderPage() {
                       <Eraser className="mr-2 h-4 w-4" />
                       Clear legacy Extension data (DEV)
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleExportProjectData}>
+                      <Upload className="mr-2 h-4 w-4" />
+                      Export Project Data (DEV)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setDatasetImportOpen(true)}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Import Project Data (DEV)
+                    </DropdownMenuItem>
                   </>
                 ) : null}
               </DropdownMenuContent>
@@ -2831,6 +2931,44 @@ export default function CatalogueBuilderPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {isDev ? (
+        <Dialog open={datasetImportOpen} onOpenChange={setDatasetImportOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Import Project Data (DEV)</DialogTitle>
+              <DialogDescription>
+                DEV tool – imports into local storage on this machine.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <Label htmlFor="project-import-file">Project export (.zip)</Label>
+              <Input
+                id="project-import-file"
+                ref={datasetImportRef}
+                type="file"
+                accept=".zip"
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDatasetImportOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleImportProjectData}
+                disabled={datasetImporting}
+              >
+                {datasetImporting ? "Importing..." : "Import"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       <AlertDialog open={datasetClearOpen} onOpenChange={setDatasetClearOpen}>
         <AlertDialogContent>

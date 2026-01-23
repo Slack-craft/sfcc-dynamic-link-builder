@@ -68,6 +68,16 @@ export async function putAsset(
   return assetId
 }
 
+export async function putAssetRecord(record: AssetRecord): Promise<void> {
+  const db = await openDb()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite")
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to store asset record"))
+    tx.objectStore(STORE_NAME).put(record)
+  })
+}
+
 export async function getAsset(assetId: string): Promise<AssetRecord | undefined> {
   const db = await openDb()
   return new Promise((resolve, reject) => {

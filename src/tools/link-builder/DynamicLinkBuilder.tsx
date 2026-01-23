@@ -1162,25 +1162,6 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
           pluValues={plus}
         />
 
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Embedded Preview (Experimental)</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <iframe
-              src={
-                previewUrlValue
-                  ? /^https?:\/\//i.test(previewUrlValue)
-                    ? previewUrlValue
-                    : `https://${previewUrlValue}`
-                  : "https://staging.supercheapauto.com.au/catalogue-out-now"
-              }
-              title="Embedded Preview"
-              className="h-[600px] w-full border-0"
-            />
-          </CardContent>
-        </Card>
-
         {/* Output */}
         <Card
           className={`lg:col-span-1 flex flex-col lg:max-h-[calc(100vh-75px)]${

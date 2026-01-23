@@ -39,6 +39,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import { toast } from "sonner"
 import DynamicLinkBuilder, { type DynamicLinkBuilderHandle } from "@/tools/link-builder/DynamicLinkBuilder"
 import { BRAND_OPTIONS } from "@/data/brands"
@@ -531,6 +536,7 @@ export default function CatalogueBuilderPage() {
   const [datasetClearOpen, setDatasetClearOpen] = useState(false)
   const [datasetImportOpen, setDatasetImportOpen] = useState(false)
   const [datasetImporting, setDatasetImporting] = useState(false)
+  const [devDebugOpen, setDevDebugOpen] = useState(false)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
   const [extensionStatus, setExtensionStatus] = useState<
     "unknown" | "available" | "unavailable"
@@ -562,6 +568,12 @@ export default function CatalogueBuilderPage() {
     if (values.size === 0) return BRAND_OPTIONS
     return Array.from(values).map((value) => ({ label: value, value }))
   }, [datasetMeta?.version])
+
+  const facetColumnList = useMemo(() => {
+    const columns = datasetMeta?.columnMeta?.facetColumns
+    if (!columns) return []
+    return Object.values(columns).flat()
+  }, [datasetMeta?.columnMeta])
 
   function persistProjectsState(
     updater: (prev: typeof projectsState) => typeof projectsState
@@ -880,7 +892,7 @@ export default function CatalogueBuilderPage() {
     [draftLinkState.plus]
   )
   const isPluAvailable = pluCount > 0
-  const isFacetAvailable = facetQuery.length > 0
+  const isFacetAvailable = true
   const isLiveAvailable = draftLiveCapturedUrl.trim().length > 0
 
   const candidatePluUrl = useMemo(
@@ -1047,13 +1059,18 @@ export default function CatalogueBuilderPage() {
     setDraftTitleEditedManually(selectedTile.titleEditedManually ?? false)
     setDraftStatus(selectedTile.status)
     setDraftNotes(selectedTile.notes ?? "")
-    setDraftLinkState(selectedTile.linkBuilderState ?? createEmptyLinkBuilderState())
+    const nextLinkState = selectedTile.linkBuilderState ?? createEmptyLinkBuilderState()
+    setDraftLinkState(nextLinkState)
     setDraftLinkOutput(selectedTile.dynamicLink ?? "")
     setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
     setDraftLiveCapturedUrl(selectedTile.liveCapturedUrl ?? "")
     setDraftLinkSource(selectedTile.linkSource ?? "manual")
-    setDraftActiveLinkMode(selectedTile.activeLinkMode ?? "plu")
-    setDraftUserHasChosenMode(selectedTile.userHasChosenMode ?? false)
+    const tileHasPlu = nextLinkState.plus.some((plu) => plu.trim().length > 0)
+    const storedMode = selectedTile.activeLinkMode
+    const storedChosen = selectedTile.userHasChosenMode ?? false
+    const defaultMode = tileHasPlu ? "plu" : "facet"
+    setDraftActiveLinkMode(storedChosen ? storedMode ?? defaultMode : defaultMode)
+    setDraftUserHasChosenMode(storedChosen)
     setDraftFacetBrands(selectedTile.facetBuilder?.selectedBrands ?? [])
     setDraftFacetArticleTypes(selectedTile.facetBuilder?.selectedArticleTypes ?? [])
     setDraftFacetExcludedPluIds(selectedTile.facetBuilder?.excludedPluIds ?? [])
@@ -2699,11 +2716,6 @@ export default function CatalogueBuilderPage() {
                               </Button>
                             ) : null
                           }
-                          previewStatusText={
-                            extensionStatus === "available"
-                              ? "Extension enabled"
-                              : "Extension not installed - manual paste required"
-                          }
                           manualBaseActions={
                             draftActiveLinkMode === "plu" ? (
                               <TooltipProvider delayDuration={200}>
@@ -2973,6 +2985,58 @@ export default function CatalogueBuilderPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {isDev ? (
+        <div className="space-y-2">
+          <Separator />
+          <Card className="border-dashed">
+            <CardHeader className="py-3">
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-sm">Dev / Debug</CardTitle>
+                <Collapsible open={devDebugOpen} onOpenChange={setDevDebugOpen}>
+                  <CollapsibleTrigger asChild>
+                    <Button type="button" size="sm" variant="outline">
+                      {devDebugOpen ? "Hide" : "Show"}
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-3 space-y-2 text-xs text-muted-foreground">
+                    <div>
+                      Facet columns detected:{" "}
+                      <span className="font-medium text-foreground">
+                        {facetColumnList.length}
+                      </span>
+                    </div>
+                    {facetColumnList.length > 0 ? (
+                      <div className="space-y-1">
+                        <div className="text-[11px] uppercase tracking-wide">
+                          Columns
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {facetColumnList.slice(0, 24).map((col) => (
+                            <span
+                              key={col}
+                              className="rounded-full border border-border px-2 py-0.5 text-[11px]"
+                            >
+                              {col}
+                            </span>
+                          ))}
+                          {facetColumnList.length > 24 ? (
+                            <span className="text-[11px]">
+                              +{facetColumnList.length - 24} more
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : (
+                      <div>No facet columns detected.</div>
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
+              </div>
+            </CardHeader>
+          </Card>
+        </div>
+      ) : null}
 
       <Dialog open={datasetImportOpen} onOpenChange={setDatasetImportOpen}>
         <DialogContent>

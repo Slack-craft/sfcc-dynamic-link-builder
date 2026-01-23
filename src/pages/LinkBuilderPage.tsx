@@ -334,11 +334,6 @@ export default function LinkBuilderPage() {
         liveLinkInputRef={liveLinkInputRef}
         onOpenPreview={handleOpenPreview}
         onLinkViaPreview={handleLinkViaPreview}
-        previewStatusText={
-          extensionStatus === "available"
-            ? "Extension enabled"
-            : "Extension not installed - manual paste required"
-        }
       />
       <Dialog open={captureDialogOpen} onOpenChange={setCaptureDialogOpen}>
         <DialogContent>

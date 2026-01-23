@@ -743,14 +743,13 @@ export function FacetMatchesCard({
   return (
     <Card className="lg:col-span-2 flex flex-col">
       <CardHeader>
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="flex flex-wrap items-center gap-3 text-sm font-medium">
-            <span>Facet columns detected: {facetColumnCount}</span>
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="flex flex-wrap items-center gap-3 text-sm font-medium">
             <span className="text-muted-foreground">
               Matching products: {displayCount}
               {excludedCount > 0 ? ` (${excludedCount} excluded)` : ""}
             </span>
-          </div>
+            </div>
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <TooltipProvider delayDuration={200}>
               <div className="flex min-w-0 flex-1 items-center">

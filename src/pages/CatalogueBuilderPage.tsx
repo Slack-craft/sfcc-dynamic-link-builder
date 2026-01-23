@@ -2205,15 +2205,13 @@ export default function CatalogueBuilderPage() {
               <Button type="submit" disabled={!newProjectName.trim()}>
                 Create project
               </Button>
-              {isDev ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setDatasetImportOpen(true)}
-                >
-                  Import Project Data (DEV)
-                </Button>
-              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDatasetImportOpen(true)}
+              >
+                Import Project Data
+              </Button>
             </form>
           </CardContent>
         </Card>

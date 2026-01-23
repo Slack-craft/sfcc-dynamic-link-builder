@@ -119,8 +119,9 @@ function buildQueryFromSelections(selected: Record<string, string[]>) {
   if (entries.length === 0) return ""
   const params = entries.map(([facetKey, values], index) => {
     const prefIndex = index + 1
+    const outputKey = facetKey === "brand" ? "srgBrand" : facetKey
     const encodedValues = encodeURIComponent(values.join("|"))
-    return `prefn${prefIndex}=${encodeURIComponent(facetKey)}&prefv${prefIndex}=${encodedValues}`
+    return `prefn${prefIndex}=${encodeURIComponent(outputKey)}&prefv${prefIndex}=${encodedValues}`
   })
   return `?${params.join("&")}&sz=36`
 }

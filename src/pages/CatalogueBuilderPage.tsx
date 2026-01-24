@@ -61,6 +61,7 @@ import { parseCsvText } from "@/lib/catalogueDataset/parseCsv"
 import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransfer"
 import useProjectDataset from "@/hooks/useProjectDataset"
 import useTileSelection from "@/hooks/useTileSelection"
+import useTileBuilder from "@/hooks/useTileBuilder"
 import {
   formatMappingInfo,
   parseTileMapping,
@@ -72,7 +73,6 @@ import { buildFacetQueryFromSelections } from "@/lib/catalogue/facets"
 import { buildPlusArray, createEmptyExtractedFlags } from "@/lib/catalogue/plu"
 import {
   buildDynamicOutputFromState,
-  buildPreviewUrlFromState,
   createEmptyLinkBuilderState,
   getBrandStub,
   isBrandPath,
@@ -292,10 +292,6 @@ export default function CatalogueBuilderPage() {
   const [offerTextDebugOpen, setOfferTextDebugOpen] = useState(false)
   const [draftLiveCapturedUrl, setDraftLiveCapturedUrl] = useState("")
   const [draftLinkSource, setDraftLinkSource] = useState<"manual" | "live">("manual")
-  const [draftActiveLinkMode, setDraftActiveLinkMode] = useState<"plu" | "facet" | "live">(
-    "plu"
-  )
-  const [draftUserHasChosenMode, setDraftUserHasChosenMode] = useState(false)
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
   const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
   const [datasetUploadOpen, setDatasetUploadOpen] = useState(false)
@@ -626,61 +622,24 @@ export default function CatalogueBuilderPage() {
     () => buildFacetQueryFromSelections(draftFacetBrands, draftFacetArticleTypes),
     [draftFacetBrands, draftFacetArticleTypes]
   )
-  const pluCount = useMemo(
-    () => draftLinkState.plus.filter((plu) => plu.trim().length > 0).length,
-    [draftLinkState.plus]
-  )
-  const isPluAvailable = pluCount > 0
-  const isFacetAvailable = true
-  const isLiveAvailable = draftLiveCapturedUrl.trim().length > 0
-
-  const candidatePluUrl = useMemo(
-    () => buildPreviewUrlFromState(draftLinkState, project?.region, ""),
-    [draftLinkState, project?.region]
-  )
-  const candidateFacetUrl = useMemo(
-    () => buildPreviewUrlFromState(draftLinkState, project?.region, facetQuery, true),
-    [draftLinkState, facetQuery, project?.region]
-  )
-  const candidateLiveUrl = useMemo(
-    () => draftLiveCapturedUrl.trim(),
-    [draftLiveCapturedUrl]
-  )
-
-  useEffect(() => {
-    const availableModes: Array<"plu" | "facet" | "live"> = []
-    if (isPluAvailable) availableModes.push("plu")
-    if (isFacetAvailable) availableModes.push("facet")
-    if (isLiveAvailable) availableModes.push("live")
-
-    if (draftUserHasChosenMode) {
-      if (!availableModes.includes(draftActiveLinkMode)) {
-        const nextMode = availableModes[0] ?? "plu"
-        setDraftActiveLinkMode(nextMode)
-      }
-      return
-    }
-
-    if (availableModes.includes("plu")) {
-      setDraftActiveLinkMode("plu")
-    } else if (availableModes.includes("facet")) {
-      setDraftActiveLinkMode("facet")
-    } else if (availableModes.includes("live")) {
-      setDraftActiveLinkMode("live")
-    }
-  }, [
+  const {
     draftActiveLinkMode,
+    setDraftActiveLinkMode,
     draftUserHasChosenMode,
+    setDraftUserHasChosenMode,
+    isPluAvailable,
     isFacetAvailable,
     isLiveAvailable,
-    isPluAvailable,
-  ])
-
-  const previewUrl = useMemo(() => {
-    if (draftActiveLinkMode === "live" && candidateLiveUrl) return candidateLiveUrl
-    if (draftActiveLinkMode === "facet") return candidateFacetUrl
-    return candidatePluUrl
-  }, [candidateFacetUrl, candidateLiveUrl, candidatePluUrl, draftActiveLinkMode])
+    previewUrl,
+    onPreviewUrlChange,
+  } = useTileBuilder({
+    selectedTile,
+    linkState: draftLinkState,
+    facetQuery,
+    projectRegion: project?.region,
+    liveCapturedUrl: draftLiveCapturedUrl,
+    setLiveCapturedUrl: setDraftLiveCapturedUrl,
+  })
 
   function computeOutputForMode(
     state: LinkBuilderState,
@@ -790,12 +749,6 @@ export default function CatalogueBuilderPage() {
     setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
     setDraftLiveCapturedUrl(selectedTile.liveCapturedUrl ?? "")
     setDraftLinkSource(selectedTile.linkSource ?? "manual")
-    const tileHasPlu = nextLinkState.plus.some((plu) => plu.trim().length > 0)
-    const storedMode = selectedTile.activeLinkMode
-    const storedChosen = selectedTile.userHasChosenMode ?? false
-    const defaultMode = tileHasPlu ? "plu" : "facet"
-    setDraftActiveLinkMode(storedChosen ? storedMode ?? defaultMode : defaultMode)
-    setDraftUserHasChosenMode(storedChosen)
     setDraftFacetBrands(selectedTile.facetBuilder?.selectedBrands ?? [])
     setDraftFacetArticleTypes(selectedTile.facetBuilder?.selectedArticleTypes ?? [])
     setDraftFacetExcludedPluIds(selectedTile.facetBuilder?.excludedPluIds ?? [])
@@ -2258,11 +2211,7 @@ export default function CatalogueBuilderPage() {
                         liveLinkEditable={extensionStatus !== "available"}
                         liveLinkInputRef={liveLinkInputRef}
                         previewUrl={previewUrl}
-                        onPreviewUrlChange={(value) => {
-                          setDraftLiveCapturedUrl(value)
-                          setDraftActiveLinkMode("live")
-                          setDraftUserHasChosenMode(true)
-                        }}
+                        onPreviewUrlChange={onPreviewUrlChange}
                         draftActiveLinkMode={draftActiveLinkMode}
                         setDraftActiveLinkMode={(mode) => {
                           setDraftActiveLinkMode(mode)

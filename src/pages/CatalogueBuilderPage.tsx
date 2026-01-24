@@ -10,6 +10,7 @@ import CatalogueHeader from "@/components/catalogue/CatalogueHeader"
 import DevPanel from "@/components/catalogue/DevPanel"
 import TileListPanel from "@/components/catalogue/TileListPanel"
 import TileDetailsCard from "@/components/catalogue/TileDetailsCard"
+import TileBuilderPanel from "@/components/catalogue/TileBuilderPanel"
 import {
   Tooltip,
   TooltipContent,
@@ -17,14 +18,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { Eraser, Info } from "lucide-react"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,7 +32,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import DatasetDropdownMenu from "@/components/catalogue/DatasetDropdownMenu"
 import { toast } from "sonner"
-import DynamicLinkBuilder, { type DynamicLinkBuilderHandle } from "@/tools/link-builder/DynamicLinkBuilder"
+import type { DynamicLinkBuilderHandle } from "@/tools/link-builder/DynamicLinkBuilder"
 import { BRAND_OPTIONS } from "@/data/brands"
 import {
   createProject,
@@ -2536,259 +2530,144 @@ export default function CatalogueBuilderPage() {
                       ) : (
                         <p className="text-sm text-muted-foreground">No image for this tile.</p>
                       )}
-                      <div className="space-y-2">
-                        <Label>Dynamic Link Builder</Label>
-                        <DynamicLinkBuilder
-                          ref={linkBuilderRef}
-                          mode="embedded"
-                          hideHistory
-                          hideAdpack
-                          initialState={draftLinkState}
-                          onChange={setDraftLinkState}
-                          onOutputChange={setDraftLinkOutput}
-                          scope={project?.region ?? "AU"}
-                          dataset={datasetMeta}
-                          onOpenDatasetPanel={() => setDatasetUploadOpen(true)}
-                          facetSelectedBrands={draftFacetBrands}
-                          facetSelectedArticleTypes={draftFacetArticleTypes}
-                          onFacetSelectedBrandsChange={setDraftFacetBrands}
-                          onFacetSelectedArticleTypesChange={setDraftFacetArticleTypes}
-                          facetExcludedPluIds={draftFacetExcludedPluIds}
-                          onFacetExcludedPluIdsChange={setDraftFacetExcludedPluIds}
-                          facetExcludePercentEnabled={draftFacetExcludePercentEnabled}
-                          onFacetExcludePercentEnabledChange={setDraftFacetExcludePercentEnabled}
-                          detectedBrands={detectedBrands}
-                          detectedOfferPercent={selectedTile.offer?.percentOff?.value}
-                          liveLinkUrl={draftLiveCapturedUrl}
-                          onLiveLinkChange={setDraftLiveCapturedUrl}
-                          liveLinkEditable={extensionStatus !== "available"}
-                          liveLinkInputRef={liveLinkInputRef}
-                          previewUrlValue={previewUrl}
-                          onPreviewUrlChange={(value) => {
-                            setDraftLiveCapturedUrl(value)
-                            setDraftActiveLinkMode("live")
-                            setDraftUserHasChosenMode(true)
-                          }}
-                          activeLinkMode={draftActiveLinkMode}
-                          onActiveLinkModeChange={(mode) => {
-                            setDraftActiveLinkMode(mode)
-                            setDraftUserHasChosenMode(true)
-                          }}
-                          isPluAvailable={isPluAvailable}
-                          isFacetAvailable={isFacetAvailable}
-                          isLiveAvailable={isLiveAvailable}
-                          outputOverride={activeOutput}
-                          onOpenPreview={handleOpenPreview}
-                          onLinkViaPreview={handleLinkViaPreview}
-                          previewExtraControls={
-                            draftLiveCapturedUrl ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  setDraftLiveCapturedUrl("")
-                                  setDraftLinkSource("manual")
-                                  setDraftUserHasChosenMode(false)
-                                }}
-                              >
-                                Clear captured link
-                              </Button>
-                            ) : null
-                          }
-                          manualBaseActions={
-                            draftActiveLinkMode === "plu" ? (
-                              <TooltipProvider delayDuration={200}>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      size="icon"
-                                      variant="outline"
-                                      className="h-10 w-10"
-                                      aria-label="Clear PLUs"
-                                      onClick={() => {
-                                        if (!draftLinkState.plus.some((value) => value.trim())) return
-                                        const nextState: LinkBuilderState = {
-                                          ...draftLinkState,
-                                          plus: draftLinkState.plus.map(() => ""),
-                                        }
-                                        setDraftLinkState(nextState)
-                                        setDraftExtractedFlags(createEmptyExtractedFlags())
-                                        setDraftLinkOutput(
-                                          computeOutputForMode(nextState, draftActiveLinkMode, facetQuery)
-                                        )
-                                      }}
-                                    >
-                                      <Eraser className="h-4 w-4" />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>Clear PLUs</TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            ) : null
-                          }
-                          extractedPluFlags={draftExtractedFlags}
-                          onExtractedPluFlagsChange={setDraftExtractedFlags}
-                        />
-                        <Dialog open={captureDialogOpen} onOpenChange={setCaptureDialogOpen}>
-                          <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Apply captured link?</DialogTitle>
-                              <DialogDescription>
-                                This can overwrite current manual link settings to build a dynamic link.
-                              </DialogDescription>
-                            </DialogHeader>
-                            <DialogFooter className="flex flex-wrap justify-end gap-2">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => {
-                                  setCaptureDialogOpen(false)
-                                  setPendingCapturedUrl(null)
-                                  setDraftActiveLinkMode("live")
-                                  setDraftUserHasChosenMode(true)
-                                }}
-                              >
-                                Capture only
-                              </Button>
-                              <Button
-                                type="button"
-                                onClick={() => {
-                                  if (!pendingCapturedUrl) {
-                                    setCaptureDialogOpen(false)
-                                    setPendingCapturedUrl(null)
-                                    return
-                                  }
-                                  const { nextState, didConvert, warnings } =
-                                    convertCapturedUrlToBuilderState(
-                                      pendingCapturedUrl,
-                                      draftLinkState
-                                    )
-                                  if (didConvert) {
-                                    setDraftLinkState(nextState)
-                                    setDraftLinkOutput(
-                                      computeOutputForMode(
-                                        nextState,
-                                        draftActiveLinkMode,
-                                        facetQuery
+                      <TileBuilderPanel
+                        selectedTile={selectedTile}
+                        awaitingManualLink={awaitingManualLink}
+                        linkBuilderRef={linkBuilderRef}
+                        draftLinkState={draftLinkState}
+                        setDraftLinkState={setDraftLinkState}
+                        setDraftLinkOutput={setDraftLinkOutput}
+                        projectRegion={project?.region ?? "AU"}
+                        datasetMeta={datasetMeta}
+                        onOpenDatasetPanel={() => setDatasetUploadOpen(true)}
+                        draftFacetBrands={draftFacetBrands}
+                        draftFacetArticleTypes={draftFacetArticleTypes}
+                        setDraftFacetBrands={setDraftFacetBrands}
+                        setDraftFacetArticleTypes={setDraftFacetArticleTypes}
+                        draftFacetExcludedPluIds={draftFacetExcludedPluIds}
+                        setDraftFacetExcludedPluIds={setDraftFacetExcludedPluIds}
+                        draftFacetExcludePercentEnabled={draftFacetExcludePercentEnabled}
+                        setDraftFacetExcludePercentEnabled={setDraftFacetExcludePercentEnabled}
+                        detectedBrands={detectedBrands}
+                        detectedOfferPercent={selectedTile.offer?.percentOff?.value}
+                        draftLiveCapturedUrl={draftLiveCapturedUrl}
+                        setDraftLiveCapturedUrl={setDraftLiveCapturedUrl}
+                        liveLinkEditable={extensionStatus !== "available"}
+                        liveLinkInputRef={liveLinkInputRef}
+                        previewUrl={previewUrl}
+                        onPreviewUrlChange={(value) => {
+                          setDraftLiveCapturedUrl(value)
+                          setDraftActiveLinkMode("live")
+                          setDraftUserHasChosenMode(true)
+                        }}
+                        draftActiveLinkMode={draftActiveLinkMode}
+                        setDraftActiveLinkMode={(mode) => {
+                          setDraftActiveLinkMode(mode)
+                          setDraftUserHasChosenMode(true)
+                        }}
+                        isPluAvailable={isPluAvailable}
+                        isFacetAvailable={isFacetAvailable}
+                        isLiveAvailable={isLiveAvailable}
+                        activeOutput={activeOutput}
+                        onOpenPreview={handleOpenPreview}
+                        onLinkViaPreview={handleLinkViaPreview}
+                        previewExtraControls={
+                          draftLiveCapturedUrl ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setDraftLiveCapturedUrl("")
+                                setDraftLinkSource("manual")
+                                setDraftUserHasChosenMode(false)
+                              }}
+                            >
+                              Clear captured link
+                            </Button>
+                          ) : null
+                        }
+                        manualBaseActions={
+                          draftActiveLinkMode === "plu" ? (
+                            <TooltipProvider delayDuration={200}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="outline"
+                                    className="h-10 w-10"
+                                    aria-label="Clear PLUs"
+                                    onClick={() => {
+                                      if (!draftLinkState.plus.some((value) => value.trim())) return
+                                      const nextState: LinkBuilderState = {
+                                        ...draftLinkState,
+                                        plus: draftLinkState.plus.map(() => ""),
+                                      }
+                                      setDraftLinkState(nextState)
+                                      setDraftExtractedFlags(createEmptyExtractedFlags())
+                                      setDraftLinkOutput(
+                                        computeOutputForMode(nextState, draftActiveLinkMode, facetQuery)
                                       )
-                                    )
-                                    setDraftLinkSource("manual")
-                                    const nextPluCount = nextState.plus.filter((plu) => plu.trim().length > 0).length
-                                    const nextFacetQuery = buildFacetQueryFromSelections(
-                                      draftFacetBrands,
-                                      draftFacetArticleTypes
-                                    )
-                                    if (nextPluCount > 0) {
-                                      setDraftActiveLinkMode("plu")
-                                    } else if (nextFacetQuery) {
-                                      setDraftActiveLinkMode("facet")
-                                    } else {
-                                      setDraftActiveLinkMode("plu")
-                                    }
-                                    setDraftUserHasChosenMode(true)
-                                  } else {
-                                    toast.warning(warnings[0] ?? "Unable to convert this URL yet.")
-                                  }
-                                  setCaptureDialogOpen(false)
-                                  setPendingCapturedUrl(null)
-                                }}
-                              >
-                                Convert to Dynamic
-                              </Button>
-                            </DialogFooter>
-                          </DialogContent>
-                        </Dialog>
-                      </div>
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Label>Offer Debug</Label>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setOfferDebugOpen((prev) => !prev)}
-                          >
-                            {offerDebugOpen ? "Hide" : "Show"}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={reExtractOfferForSelected}
-                            disabled={!selectedTile.extractedText}
-                          >
-                            Re-extract Offer
-                          </Button>
-                        </div>
-                      </div>
-                      {offerDebugOpen ? (
-                        <div className="rounded-md border border-border bg-muted/30 p-3 text-xs">
-                          <div className="space-y-1">
-                            <div>
-                              <span className="font-medium">Title:</span>{" "}
-                              {selectedTile.offer?.title ?? "-"}
-                            </div>
-                            <div>
-                              <span className="font-medium">Brand:</span>{" "}
-                              {selectedTile.offer?.brand?.label ?? "-"}
-                            </div>
-                            <div>
-                              <span className="font-medium">Details:</span>{" "}
-                              {selectedTile.offer?.productDetails ?? "-"}
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Label>Debug: Extracted Text</Label>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setOfferTextDebugOpen((prev) => !prev)}
-                        >
-                          {offerTextDebugOpen ? "Hide" : "Show"}
-                        </Button>
-                      </div>
-                      {offerTextDebugOpen ? (
-                        <div className="space-y-2">
-                          <div className="text-xs text-muted-foreground">
-                            Offer updated:{" "}
-                            {selectedTile.offerUpdatedAt
-                              ? new Date(selectedTile.offerUpdatedAt).toLocaleString()
-                              : "-"}
-                          </div>
-                          {selectedTile.extractedText ||
-                          selectedTile.offer?.source?.rawText ? (
-                            <Textarea
-                              readOnly
-                              value={
-                                selectedTile.extractedText ??
-                                selectedTile.offer?.source?.rawText ??
-                                ""
-                              }
-                              className="min-h-[120px] text-xs"
-                            />
-                          ) : (
-                            <div className="text-xs text-muted-foreground">
-                              No extracted text stored for this tile.
-                            </div>
-                          )}
-                          {selectedTile.offer?.source?.cleanedText ? (
-                            <Textarea
-                              readOnly
-                              value={selectedTile.offer.source.cleanedText}
-                              className="min-h-[80px] text-xs"
-                            />
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
+                                    }}
+                                  >
+                                    <Eraser className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Clear PLUs</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : null
+                        }
+                        extractedPluFlags={draftExtractedFlags}
+                        setDraftExtractedFlags={setDraftExtractedFlags}
+                        captureDialogOpen={captureDialogOpen}
+                        setCaptureDialogOpen={setCaptureDialogOpen}
+                        onCaptureOnly={() => {
+                          setCaptureDialogOpen(false)
+                          setPendingCapturedUrl(null)
+                          setDraftActiveLinkMode("live")
+                          setDraftUserHasChosenMode(true)
+                        }}
+                        onConvertCaptured={() => {
+                          if (!pendingCapturedUrl) {
+                            setCaptureDialogOpen(false)
+                            setPendingCapturedUrl(null)
+                            return
+                          }
+                          const { nextState, didConvert, warnings } =
+                            convertCapturedUrlToBuilderState(pendingCapturedUrl, draftLinkState)
+                          if (didConvert) {
+                            setDraftLinkState(nextState)
+                            setDraftLinkOutput(
+                              computeOutputForMode(nextState, draftActiveLinkMode, facetQuery)
+                            )
+                            setDraftLinkSource("manual")
+                            const nextPluCount = nextState.plus.filter((plu) => plu.trim().length > 0).length
+                            const nextFacetQuery = buildFacetQueryFromSelections(
+                              draftFacetBrands,
+                              draftFacetArticleTypes
+                            )
+                            if (nextPluCount > 0) {
+                              setDraftActiveLinkMode("plu")
+                            } else if (nextFacetQuery) {
+                              setDraftActiveLinkMode("facet")
+                            } else {
+                              setDraftActiveLinkMode("plu")
+                            }
+                            setDraftUserHasChosenMode(true)
+                          } else {
+                            toast.warning(warnings[0] ?? "Unable to convert this URL yet.")
+                          }
+                          setCaptureDialogOpen(false)
+                          setPendingCapturedUrl(null)
+                        }}
+                        offerDebugOpen={offerDebugOpen}
+                        setOfferDebugOpen={setOfferDebugOpen}
+                        offerTextDebugOpen={offerTextDebugOpen}
+                        setOfferTextDebugOpen={setOfferTextDebugOpen}
+                        onReExtractOffer={reExtractOfferForSelected}
+                      />
                     </CardContent>
                   </Card>
                 ) : (

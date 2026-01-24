@@ -64,6 +64,21 @@ import useTileSelection from "@/hooks/useTileSelection"
 import useTileBuilder from "@/hooks/useTileBuilder"
 import useTileDraftState from "@/hooks/useTileDraftState"
 import {
+  createTilesFromFiles as createTilesFromFilesService,
+  getDatasetKey,
+  handleClearDataset as handleClearDatasetService,
+  handleDatasetUpload as handleDatasetUploadService,
+  handleDownloadDataset as handleDownloadDatasetService,
+  handleDragOver as handleDragOverService,
+  handleDrop as handleDropService,
+  handleExportProjectData as handleExportProjectDataService,
+  handleImportProjectData as handleImportProjectDataService,
+  handleReplaceChange as handleReplaceChangeService,
+  handleSetupImageUpload as handleSetupImageUploadService,
+  handleSetupPdfUpload as handleSetupPdfUploadService,
+  handleUploadChange as handleUploadChangeService,
+} from "@/lib/catalogue/projectFilesService"
+import {
   formatMappingInfo,
   parseTileMapping,
   sanitizeTileId,
@@ -757,314 +772,118 @@ export default function CatalogueBuilderPage() {
     selectedTile?.imageKey,
   ])
 
-  function buildUploadSignature(files: File[]) {
-    return files
-      .map((file) => `${file.name}:${file.size}:${file.lastModified}`)
-      .join("|")
-  }
-
-  function getDatasetKey(projectId: string, datasetId: string) {
-    return `${projectId}:catalogueDataset:${datasetId}`
-  }
-
   async function createTilesFromFiles(fileList: FileList, replaceExisting: boolean) {
-    if (!project) return
-    const files = Array.from(fileList).sort((a: File, b: File) =>
-      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
-    )
-
-    if (files.length === 0) return
-    const uploadSignature = buildUploadSignature(files)
-    if (isUploadingImagesRef.current) {
-      if (lastUploadSignatureRef.current === uploadSignature) {
-        return
-      }
-      return
-    }
-    isUploadingImagesRef.current = true
-    lastUploadSignatureRef.current = uploadSignature
-
-    try {
-      if (replaceExisting) {
-        await deleteImagesForProject(project.id)
-        clearObjectUrlCache()
-      }
-
-      const totalSize = files.reduce((sum, file) => sum + file.size, 0)
-      if (totalSize > MAX_TOTAL_UPLOAD_BYTES) {
-        toast.warning("Large upload detected. localStorage may hit limits with big image sets.")
-      }
-
-      const existingIds = new Set(
-        (replaceExisting ? [] : project.tiles.map((tile) => tile.id)).map((id) =>
-          id.toLowerCase()
-        )
-      )
-
-      const tilesToAdd: Tile[] = []
-      const newImageIds: string[] = []
-      for (const file of files) {
-        const baseName = stripExtension(file.name)
-        const rawId = sanitizeTileId(baseName)
-        let uniqueId = rawId
-        let suffix = 2
-        while (existingIds.has(uniqueId.toLowerCase())) {
-          uniqueId = `${rawId}-${suffix}`
-          suffix += 1
-        }
-        existingIds.add(uniqueId.toLowerCase())
-
-        const colorKey = await putImage(project.id, file.name, file)
-        newImageIds.push(colorKey)
-    tilesToAdd.push({
-      id: uniqueId,
-      tileNumber: uniqueId,
-      status: "todo",
-      notes: undefined,
-      dynamicLink: undefined,
-      activeLinkMode: "plu",
-      userHasChosenMode: false,
-      linkBuilderState: createEmptyLinkBuilderState(),
-      extractedPluFlags: createEmptyExtractedFlags(),
-          facetBuilder: {
-            selectedBrands: [],
-            selectedArticleTypes: [],
-            excludedPluIds: [],
-            excludePercentMismatchesEnabled: false,
-          },
-          linkSource: "manual",
-          liveCapturedUrl: undefined,
-          imageKey: colorKey,
-          originalFileName: file.name,
-        })
-      }
-
-      const nextImageAssetIds = Array.from(
-        new Set([
-          ...(replaceExisting ? [] : project.imageAssetIds ?? []),
-          ...newImageIds,
-        ])
-      )
-
-      const updated: CatalogueProject = {
-        ...project,
-        tiles: replaceExisting ? tilesToAdd : [...project.tiles, ...tilesToAdd],
-        imageAssetIds: nextImageAssetIds,
-        updatedAt: new Date().toISOString(),
-      }
-
-      upsertProject(updated)
-      if (isDev) {
-        console.log("[setup] image upload", {
-          files: files.length,
-          newAssetIds: newImageIds.length,
-          imageAssetIds: updated.imageAssetIds.length,
-          tiles: updated.tiles.length,
-        })
-      }
-      setSelectedTileId(tilesToAdd[0]?.id ?? updated.tiles[0]?.id ?? null)
-    } finally {
-      isUploadingImagesRef.current = false
-      lastUploadSignatureRef.current = null
-    }
+    await createTilesFromFilesService({
+      project,
+      fileList,
+      replaceExisting,
+      maxTotalUploadBytes: MAX_TOTAL_UPLOAD_BYTES,
+      isUploadingImagesRef,
+      lastUploadSignatureRef,
+      deleteImagesForProject,
+      clearObjectUrlCache,
+      putImage,
+      stripExtension,
+      sanitizeTileId,
+      createEmptyLinkBuilderState,
+      createEmptyExtractedFlags,
+      upsertProject,
+      setSelectedTileId,
+      toast,
+      isDev,
+    })
   }
 
-  async function handleSetupPdfUpload(event: React.ChangeEvent<HTMLInputElement>) {
-    if (!project) return
-    const files = event.target.files
-    if (!files || files.length === 0) return
-    const newPdfIds: string[] = []
-    for (const file of Array.from(files)) {
-      const pdfId = await putAsset(project.id, "pdf", file.name, file)
-      newPdfIds.push(pdfId)
-    }
-    const nextPdfIds = Array.from(
-      new Set([...(project.pdfAssetIds ?? []), ...newPdfIds])
-    )
-    const updated: CatalogueProject = {
-      ...project,
-      pdfAssetIds: nextPdfIds,
-      updatedAt: new Date().toISOString(),
-    }
-    upsertProject(updated)
-    event.target.value = ""
+  function handleSetupPdfUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    void handleSetupPdfUploadService({
+      event,
+      project,
+      putAsset,
+      upsertProject,
+    })
   }
 
   function handleSetupImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = event.target.files
-    if (!files || files.length === 0) return
-    void createTilesFromFiles(files, false)
-    event.target.value = ""
+    handleSetupImageUploadService({
+      event,
+      createTilesFromFiles,
+    })
   }
 
   async function handleDatasetUpload(event: React.ChangeEvent<HTMLInputElement>) {
-    if (!project) return
-    const file = event.target.files?.[0]
-    if (!file) return
-    const text = await file.text()
-    const parsed = parseCsvText(text)
-    const datasetId = crypto.randomUUID()
-    const datasetKey = getDatasetKey(project.id, datasetId)
-    await putProjectDataset(datasetKey, project.id, file.name, text)
-
-    datasetRowsRef.current = parsed.rows
-
-    const updated: CatalogueProject = {
-      ...project,
-      dataset: {
-        id: datasetId,
-        filename: file.name,
-        rowCount: parsed.rows.length,
-        headers: parsed.headers,
-        loadedAt: new Date().toISOString(),
-      },
-      updatedAt: new Date().toISOString(),
-    }
-    upsertProject(updated)
-    event.target.value = ""
+    await handleDatasetUploadService({
+      event,
+      project,
+      parseCsvText,
+      putProjectDataset,
+      datasetRowsRef,
+      upsertProject,
+    })
   }
 
   async function handleClearDataset() {
-    if (!project || !project.dataset) return
-    const datasetKey = getDatasetKey(project.id, project.dataset.id)
-    await deleteProjectDataset(datasetKey)
-    datasetRowsRef.current = []
-    const updated: CatalogueProject = {
-      ...project,
-      dataset: null,
-      updatedAt: new Date().toISOString(),
-    }
-    upsertProject(updated)
+    await handleClearDatasetService({
+      project,
+      deleteProjectDataset,
+      datasetRowsRef,
+      upsertProject,
+    })
   }
 
   async function handleDownloadDataset() {
-    if (!project?.dataset) return
-    const datasetKey = getDatasetKey(project.id, project.dataset.id)
-    const record = await getProjectDataset(datasetKey)
-    if (!record) {
-      toast.error("Dataset file not found in storage.")
-      return
-    }
-    const blob = new Blob([record.csvText], { type: "text/csv;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement("a")
-    anchor.href = url
-    anchor.download = record.filename || project.dataset.filename || "dataset.csv"
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    URL.revokeObjectURL(url)
+    await handleDownloadDatasetService({
+      project,
+      getProjectDataset,
+      toast,
+    })
   }
 
   async function handleExportProjectData() {
-    if (!project) return
-    try {
-      const assets = await listAssets(project.id)
-      const datasetRecord = project.dataset
-        ? await getProjectDataset(getDatasetKey(project.id, project.dataset.id))
-        : undefined
-      const blob = await exportProjectToZip({
-        project,
-        assets,
-        dataset: datasetRecord,
-      })
-      const safeName = project.name.replace(/[^a-z0-9_-]+/gi, "_")
-      const timestamp = new Date()
-        .toISOString()
-        .replace(/[:.]/g, "")
-        .slice(0, 15)
-      const filename = `catalogue_link_builder_export_${safeName}_${timestamp}.zip`
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement("a")
-      anchor.href = url
-      anchor.download = filename
-      document.body.appendChild(anchor)
-      anchor.click()
-      anchor.remove()
-      URL.revokeObjectURL(url)
-      toast.success("Project export ready.")
-    } catch (error) {
-      toast.error("Failed to export project data.")
-    }
+    await handleExportProjectDataService({
+      project,
+      listAssets,
+      getProjectDataset,
+      exportProjectToZip,
+      toast,
+    })
   }
 
   async function handleImportProjectData() {
-    if (!datasetImportRef.current?.files?.[0]) return
-    const file = datasetImportRef.current.files[0]
-    setDatasetImporting(true)
-    try {
-      const { manifest, assetBlobs, datasetCsv } = await importProjectFromZip(file)
-      const newProjectId = crypto.randomUUID()
-      const now = new Date().toISOString()
-      const imported: CatalogueProject = {
-        ...manifest.project,
-        id: newProjectId,
-        createdAt: now,
-        updatedAt: now,
-      }
-
-      if (imported.dataset && datasetCsv) {
-        const datasetKey = getDatasetKey(newProjectId, imported.dataset.id)
-        await putProjectDataset(
-          datasetKey,
-          newProjectId,
-          imported.dataset.filename,
-          datasetCsv
-        )
-      } else {
-        imported.dataset = null
-      }
-
-      for (const assetMeta of manifest.assets) {
-        const blob = assetBlobs.get(assetMeta.assetId)
-        if (!blob) continue
-        await putAssetRecord({
-          assetId: assetMeta.assetId,
-          projectId: newProjectId,
-          type: assetMeta.type,
-          name: assetMeta.name,
-          blob,
-          createdAt: assetMeta.createdAt,
-        })
-      }
-
-      setProjectsState((prev) => ({
-        activeProjectId: newProjectId,
-        projects: [...prev.projects, imported],
-      }))
-      datasetImportRef.current.value = ""
-      setDatasetImportOpen(false)
-      toast.success(`Imported project: ${imported.name}`)
-    } catch (error) {
-      toast.error("Failed to import project data.")
-    } finally {
-      setDatasetImporting(false)
-    }
+    await handleImportProjectDataService({
+      datasetImportRef,
+      setDatasetImporting,
+      importProjectFromZip,
+      putProjectDataset,
+      putAssetRecord,
+      setProjectsState,
+      setDatasetImportOpen,
+      toast,
+    })
   }
 
   function handleUploadChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = event.target.files
-    if (!files || files.length === 0) return
-    void createTilesFromFiles(files, false)
-    event.target.value = ""
+    handleUploadChangeService({
+      event,
+      createTilesFromFiles,
+    })
   }
 
   function handleReplaceChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = event.target.files
-    if (!files || files.length === 0) return
-    void createTilesFromFiles(files, true)
-    event.target.value = ""
+    handleReplaceChangeService({
+      event,
+      createTilesFromFiles,
+    })
   }
 
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault()
-    const files = event.dataTransfer.files
-    if (!files || files.length === 0) return
-    void createTilesFromFiles(files, false)
+    handleDropService({
+      event,
+      createTilesFromFiles,
+    })
   }
 
   const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
+    handleDragOverService(event)
   }, [])
 
   useEffect(() => {

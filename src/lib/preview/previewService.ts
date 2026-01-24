@@ -1,5 +1,3 @@
-import { extensionRequest } from "@/lib/preview/extensionRequest"
-
 type ExtensionStatus = "unknown" | "available" | "unavailable"
 
 type PreviewOptions = {
@@ -14,30 +12,16 @@ type PreviewOptions = {
 
 export async function openPreview({
   url,
-  extensionStatus,
-  setExtensionStatus,
   onOpenWindow,
   toastInfo,
 }: PreviewOptions) {
   if (!url) return
-  if (extensionStatus === "unavailable") {
-    onOpenWindow()
-    return
-  }
   toastInfo("Opening preview...")
-  try {
-    await extensionRequest("SCA_OPEN_PREVIEW_WINDOW", { url }, 600)
-    setExtensionStatus("available")
-  } catch {
-    setExtensionStatus("unavailable")
-    onOpenWindow()
-  }
+  onOpenWindow()
 }
 
 export async function linkViaPreview({
   url,
-  extensionStatus,
-  setExtensionStatus,
   onOpenWindow,
   onBeforeOpen,
   onManualFallback,
@@ -54,16 +38,5 @@ export async function linkViaPreview({
     )
   }
 
-  if (extensionStatus === "unavailable") {
-    manualFallback()
-    return
-  }
-  toastInfo("Opening preview... Close the window to capture Live Link.")
-  try {
-    await extensionRequest("SCA_OPEN_LINK_VIA_PREVIEW", { url }, 600)
-    setExtensionStatus("available")
-  } catch {
-    setExtensionStatus("unavailable")
-    manualFallback()
-  }
+  manualFallback()
 }

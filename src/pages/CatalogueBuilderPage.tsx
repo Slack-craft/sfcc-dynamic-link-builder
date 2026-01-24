@@ -55,7 +55,6 @@ import { extractTextFromRect, loadPdfDocument, type PdfRect } from "@/tools/cata
 import { parseOfferText } from "@/lib/extraction/parseOfferText"
 import { extractPlusFromPdfText } from "@/lib/extraction/pluUtils"
 import { clearObjectUrlCache, getObjectUrl } from "@/lib/images/objectUrlCache"
-import { hasExtensionPing } from "@/lib/preview/hasExtension"
 import { linkViaPreview, openPreview } from "@/lib/preview/previewService"
 import { parseCsvText } from "@/lib/catalogueDataset/parseCsv"
 import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransfer"
@@ -300,9 +299,6 @@ export default function CatalogueBuilderPage() {
   const [datasetImporting, setDatasetImporting] = useState(false)
   const [devDebugOpen, setDevDebugOpen] = useState(false)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
-  const [extensionStatus, setExtensionStatus] = useState<
-    "unknown" | "available" | "unavailable"
-  >("unknown")
   const linkBuilderRef = useRef<DynamicLinkBuilderHandle | null>(null)
   const activeLinkModeRef = useRef<"plu" | "facet" | "live">("plu")
   const userHasChosenModeRef = useRef(false)
@@ -888,34 +884,6 @@ export default function CatalogueBuilderPage() {
   }, [])
 
   useEffect(() => {
-    function onMessage(event: MessageEvent) {
-      const msg = event.data
-      if (!msg || msg.type !== "SCA_LINK_SESSION_CLOSED") return
-      if (!msg.finalUrl) return
-      handleCapturedUrl(msg.finalUrl)
-      setAwaitingManualLink(false)
-      setExtensionStatus("available")
-      toast.success("Live Link captured")
-    }
-
-    window.addEventListener("message", onMessage)
-    return () => window.removeEventListener("message", onMessage)
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    async function checkExtension() {
-      const pinged = await hasExtensionPing(180)
-      if (cancelled) return
-      setExtensionStatus(pinged ? "available" : "unavailable")
-    }
-    void checkExtension()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
     if (!awaitingManualLink) return
 
     let active = true
@@ -1062,8 +1030,8 @@ export default function CatalogueBuilderPage() {
   async function handleOpenPreview() {
     await openPreview({
       url: previewUrl,
-      extensionStatus,
-      setExtensionStatus,
+      extensionStatus: "unavailable",
+      setExtensionStatus: () => {},
       onOpenWindow: () => {
         window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
       },
@@ -1074,8 +1042,8 @@ export default function CatalogueBuilderPage() {
   async function handleLinkViaPreview() {
     await linkViaPreview({
       url: previewUrl,
-      extensionStatus,
-      setExtensionStatus,
+      extensionStatus: "unavailable",
+      setExtensionStatus: () => {},
       onBeforeOpen: () => {
         setDraftActiveLinkMode("live")
         setDraftUserHasChosenMode(true)
@@ -1922,7 +1890,7 @@ export default function CatalogueBuilderPage() {
                         detectedOfferPercent={selectedTile.offer?.percentOff?.value}
                         draftLiveCapturedUrl={draftLiveCapturedUrl}
                         setDraftLiveCapturedUrl={setDraftLiveCapturedUrl}
-                        liveLinkEditable={extensionStatus !== "available"}
+                        liveLinkEditable
                         liveLinkInputRef={liveLinkInputRef}
                         previewUrl={previewUrl}
                         onPreviewUrlChange={onPreviewUrlChange}

@@ -11,7 +11,6 @@ import {
 import { Button } from "@/components/ui/button"
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 import { BRAND_OPTIONS } from "@/data/brands"
-import { hasExtensionPing } from "@/lib/preview/hasExtension"
 import { linkViaPreview, openPreview } from "@/lib/preview/previewService"
 import { toast } from "sonner"
 
@@ -93,43 +92,12 @@ export default function LinkBuilderPage() {
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
   const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
-  const [extensionStatus, setExtensionStatus] = useState<
-    "unknown" | "available" | "unavailable"
-  >("unknown")
   const liveLinkInputRef = useRef<HTMLInputElement | null>(null)
 
   const previewUrl = useMemo(
     () => buildPreviewUrlFromState(builderState, "AU"),
     [builderState]
   )
-
-  useEffect(() => {
-    let cancelled = false
-    async function checkExtension() {
-      const pinged = await hasExtensionPing(180)
-      if (cancelled) return
-      setExtensionStatus(pinged ? "available" : "unavailable")
-    }
-    void checkExtension()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    function onMessage(event: MessageEvent) {
-      const msg = event.data
-      if (!msg || msg.type !== "SCA_LINK_SESSION_CLOSED") return
-      if (!msg.finalUrl) return
-      handleCapturedUrl(msg.finalUrl)
-      setAwaitingManualLink(false)
-      setExtensionStatus("available")
-      toast.success("Live Link captured")
-    }
-
-    window.addEventListener("message", onMessage)
-    return () => window.removeEventListener("message", onMessage)
-  }, [builderState])
 
   function convertCapturedUrlToBuilderState(
     finalUrl: string,
@@ -279,20 +247,20 @@ export default function LinkBuilderPage() {
   const handleOpenPreview = useCallback(async () => {
     await openPreview({
       url: previewUrl,
-      extensionStatus,
-      setExtensionStatus,
+      extensionStatus: "unavailable",
+      setExtensionStatus: () => {},
       onOpenWindow: () => {
         window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
       },
       toastInfo: toast.info,
     })
-  }, [extensionStatus, previewUrl])
+  }, [previewUrl])
 
   const handleLinkViaPreview = useCallback(async () => {
     await linkViaPreview({
       url: previewUrl,
-      extensionStatus,
-      setExtensionStatus,
+      extensionStatus: "unavailable",
+      setExtensionStatus: () => {},
       onOpenWindow: () => {
         window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
       },
@@ -301,7 +269,7 @@ export default function LinkBuilderPage() {
       },
       toastInfo: toast.info,
     })
-  }, [extensionStatus, previewUrl])
+  }, [previewUrl])
 
   return (
     <>
@@ -319,7 +287,7 @@ export default function LinkBuilderPage() {
       detectedBrands={[]}
       liveLinkUrl={liveLinkUrl}
       onLiveLinkChange={setLiveLinkUrl}
-        liveLinkEditable={extensionStatus !== "available"}
+        liveLinkEditable
         liveLinkInputRef={liveLinkInputRef}
         onOpenPreview={handleOpenPreview}
         onLinkViaPreview={handleLinkViaPreview}

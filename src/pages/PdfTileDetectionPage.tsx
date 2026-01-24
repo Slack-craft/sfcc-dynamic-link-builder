@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { detectTilesInCanvas } from "@/tools/catalogue-builder/pdfTileDetect"
 import { loadOpenCv } from "@/lib/loadOpenCv"
-import { deleteAsset, getAsset, listAssets, putAsset } from "@/lib/assetStore"
+import { deleteAsset, getAsset, listAssets, putAsset, putAssetRecord } from "@/lib/assetStore"
 import {
   loadProjectsState,
   saveProjectsState,
@@ -125,6 +125,8 @@ export default function PdfTileDetectionPage({
     current: { x: number; y: number }
   } | null>(null)
   const lastPdfIdRef = useRef<string | null>(null)
+  const skipAutoDetectRef = useRef(false)
+  const replacePdfInputRef = useRef<HTMLInputElement | null>(null)
 
   function selectRectIndex(next: number | null, reason: string) {
     setSelectedRectIndex((prev) => {
@@ -414,6 +416,49 @@ export default function PdfTileDetectionPage({
     }
 
     event.target.value = ""
+  }
+
+  async function handleReplacePdf(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file || !currentProject || !selectedPdfEntry) return
+    const confirmed = window.confirm(
+      "This will replace the PDF file for this slot. Existing rectangles and tile matches will be preserved. If the new PDF layout differs, you may need to adjust rectangles."
+    )
+    if (!confirmed) return
+    await putAssetRecord({
+      assetId: selectedPdfEntry.id,
+      projectId: currentProject.id,
+      type: "pdf",
+      name: file.name,
+      blob: file,
+      createdAt: Date.now(),
+    })
+    const buffer = await file.arrayBuffer()
+    const doc = await pdfjsLib.getDocument({ data: buffer }).promise
+    pdfDocMapRef.current.set(selectedPdfEntry.id, doc)
+    setPdfs((prev) =>
+      prev.map((entry) =>
+        entry.id === selectedPdfEntry.id
+          ? {
+              ...entry,
+              name: file.name,
+              pageCount: doc.numPages,
+              selectedPage: Math.min(entry.selectedPage, doc.numPages),
+            }
+          : entry
+      )
+    )
+    if (selectedPdfId === selectedPdfEntry.id) {
+      pdfRef.current = doc
+      const nextPage = Math.min(pageNumber, doc.numPages)
+      setPageCount(doc.numPages)
+      setPageNumber(nextPage)
+      setPageRendered(false)
+      skipAutoDetectRef.current = true
+      await renderPage(nextPage)
+    }
+    toast.success("PDF replaced (rectangles and matches preserved).")
   }
 
   async function renderPage(targetPage?: number) {
@@ -937,6 +982,10 @@ export default function PdfTileDetectionPage({
     if (!entry) return
     if (detecting || rendering) return
     if (isAutoDetectingRef.current) return
+    if (skipAutoDetectRef.current) {
+      skipAutoDetectRef.current = false
+      return
+    }
 
     const pageData = entry.pages[entry.selectedPage]
     if (pageData && pageData.boxes && pageData.boxes.length > 0) return
@@ -1711,7 +1760,25 @@ export default function PdfTileDetectionPage({
                 ) : null}
               </div>
               <div className="space-y-2">
-                <Label>PDF list</Label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label>PDF list</Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => replacePdfInputRef.current?.click()}
+                    disabled={!selectedPdfEntry}
+                  >
+                    Replace PDF
+                  </Button>
+                  <Input
+                    ref={replacePdfInputRef}
+                    type="file"
+                    accept="application/pdf"
+                    onChange={handleReplacePdf}
+                    className="hidden"
+                  />
+                </div>
                 <div className="max-h-[180px] overflow-auto rounded-md border border-border bg-background p-2 text-xs">
                   {pdfs.length === 0 ? (
                     <div className="text-muted-foreground">No PDFs loaded.</div>

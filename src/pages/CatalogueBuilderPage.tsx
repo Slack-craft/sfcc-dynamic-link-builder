@@ -62,6 +62,7 @@ import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransf
 import useProjectDataset from "@/hooks/useProjectDataset"
 import useTileSelection from "@/hooks/useTileSelection"
 import useTileBuilder from "@/hooks/useTileBuilder"
+import useTileDraftState from "@/hooks/useTileDraftState"
 import {
   formatMappingInfo,
   parseTileMapping,
@@ -85,7 +86,6 @@ import type {
   ProjectStage,
   Region,
   Tile,
-  TileStatus,
 } from "@/tools/catalogue-builder/catalogueTypes"
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 
@@ -268,19 +268,6 @@ export default function CatalogueBuilderPage() {
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [newProjectName, setNewProjectName] = useState("")
   const [newProjectRegion, setNewProjectRegion] = useState<Region>("AU")
-  const [draftTitle, setDraftTitle] = useState("")
-  const [draftTitleEditedManually, setDraftTitleEditedManually] = useState(false)
-  const [draftStatus, setDraftStatus] = useState<TileStatus>("todo")
-  const [draftNotes, setDraftNotes] = useState("")
-  const [draftLinkState, setDraftLinkState] = useState<LinkBuilderState>(() =>
-    createEmptyLinkBuilderState()
-  )
-  const [draftLinkOutput, setDraftLinkOutput] = useState("")
-  const [draftExtractedFlags, setDraftExtractedFlags] = useState<boolean[]>(() =>
-    createEmptyExtractedFlags()
-  )
-  const [draftFacetExcludedPluIds, setDraftFacetExcludedPluIds] = useState<string[]>([])
-  const [draftFacetExcludePercentEnabled, setDraftFacetExcludePercentEnabled] = useState(false)
   const [tileThumbUrls, setTileThumbUrls] = useState<Record<string, string>>({})
   const [selectedColorUrl, setSelectedColorUrl] = useState<string | null>(null)
   const [pdfExtractRunning, setPdfExtractRunning] = useState(false)
@@ -288,8 +275,6 @@ export default function CatalogueBuilderPage() {
   const [pdfAssetNames, setPdfAssetNames] = useState<Record<string, string>>({})
   const [offerDebugOpen, setOfferDebugOpen] = useState(false)
   const [offerTextDebugOpen, setOfferTextDebugOpen] = useState(false)
-  const [draftLiveCapturedUrl, setDraftLiveCapturedUrl] = useState("")
-  const [draftLinkSource, setDraftLinkSource] = useState<"manual" | "live">("manual")
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
   const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
   const [datasetUploadOpen, setDatasetUploadOpen] = useState(false)
@@ -303,6 +288,10 @@ export default function CatalogueBuilderPage() {
     "unknown" | "available" | "unavailable"
   >("unknown")
   const linkBuilderRef = useRef<DynamicLinkBuilderHandle | null>(null)
+  const activeLinkModeRef = useRef<"plu" | "facet" | "live">("plu")
+  const userHasChosenModeRef = useRef(false)
+  const facetBrandsRef = useRef<string[]>([])
+  const facetArticleTypesRef = useRef<string[]>([])
   const liveLinkInputRef = useRef<HTMLInputElement | null>(null)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
@@ -332,6 +321,42 @@ export default function CatalogueBuilderPage() {
     project?.id ?? null,
     project?.dataset?.id ?? null
   )
+  const { vm: draftVm, actions: draftActions } = useTileDraftState({
+    project,
+    selectedTile,
+    updateTile,
+    onUpsertProject: upsertProject,
+    commitBuilderState: () => linkBuilderRef.current?.commitNow(),
+    beforeSelectRef,
+    getActiveLinkMode: () => activeLinkModeRef.current,
+    getUserHasChosenMode: () => userHasChosenModeRef.current,
+    getFacetBrands: () => facetBrandsRef.current,
+    getFacetArticleTypes: () => facetArticleTypesRef.current,
+  })
+  const {
+    draftTitle,
+    draftStatus,
+    draftNotes,
+    draftLinkState,
+    draftExtractedFlags,
+    draftFacetExcludedPluIds,
+    draftFacetExcludePercentEnabled,
+    draftLiveCapturedUrl,
+  } = draftVm
+  const {
+    setDraftTitle,
+    setDraftTitleEditedManually,
+    setDraftStatus,
+    setDraftNotes,
+    setDraftLinkState,
+    setDraftLinkOutput,
+    setDraftExtractedFlags,
+    setDraftFacetExcludedPluIds,
+    setDraftFacetExcludePercentEnabled,
+    setDraftLiveCapturedUrl,
+    setDraftLinkSource,
+    commitAndSaveSelectedTile,
+  } = draftActions
 
   const datasetBrandOptions = useMemo(() => {
     if (!datasetMeta) return BRAND_OPTIONS
@@ -621,10 +646,10 @@ export default function CatalogueBuilderPage() {
     setDraftActiveLinkMode,
     draftUserHasChosenMode,
     setDraftUserHasChosenMode,
-    draftFacetBrands,
-    setDraftFacetBrands,
-    draftFacetArticleTypes,
-    setDraftFacetArticleTypes,
+    draftFacetBrands: builderFacetBrands,
+    setDraftFacetBrands: setBuilderFacetBrands,
+    draftFacetArticleTypes: builderFacetArticleTypes,
+    setDraftFacetArticleTypes: setBuilderFacetArticleTypes,
     isPluAvailable,
     isFacetAvailable,
     isLiveAvailable,
@@ -639,6 +664,15 @@ export default function CatalogueBuilderPage() {
     liveCapturedUrl: draftLiveCapturedUrl,
     setLiveCapturedUrl: setDraftLiveCapturedUrl,
   })
+
+  useEffect(() => {
+    activeLinkModeRef.current = draftActiveLinkMode
+    userHasChosenModeRef.current = draftUserHasChosenMode
+  }, [draftActiveLinkMode, draftUserHasChosenMode])
+  useEffect(() => {
+    facetBrandsRef.current = builderFacetBrands
+    facetArticleTypesRef.current = builderFacetArticleTypes
+  }, [builderFacetBrands, builderFacetArticleTypes])
 
 
   function setProjectStage(nextStage: ProjectStage) {
@@ -702,41 +736,6 @@ export default function CatalogueBuilderPage() {
       cancelled = true
     }
   }, [project?.id, tileImageSignature])
-
-  useEffect(() => {
-    if (!selectedTile) {
-      setDraftTitle("")
-      setDraftTitleEditedManually(false)
-      setDraftStatus("todo")
-      setDraftNotes("")
-      setDraftLinkState(createEmptyLinkBuilderState())
-      setDraftLinkOutput("")
-      setDraftExtractedFlags(createEmptyExtractedFlags())
-    setDraftFacetBrands([])
-    setDraftFacetArticleTypes([])
-    setDraftFacetExcludedPluIds([])
-    setDraftFacetExcludePercentEnabled(false)
-    setDraftLiveCapturedUrl("")
-    setDraftLinkSource("manual")
-    setDraftActiveLinkMode("plu")
-    setDraftUserHasChosenMode(false)
-    return
-    }
-    setDraftTitle(selectedTile.title ?? "")
-    setDraftTitleEditedManually(selectedTile.titleEditedManually ?? false)
-    setDraftStatus(selectedTile.status)
-    setDraftNotes(selectedTile.notes ?? "")
-    const nextLinkState = selectedTile.linkBuilderState ?? createEmptyLinkBuilderState()
-    setDraftLinkState(nextLinkState)
-    setDraftLinkOutput(selectedTile.dynamicLink ?? "")
-    setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
-    setDraftLiveCapturedUrl(selectedTile.liveCapturedUrl ?? "")
-    setDraftLinkSource(selectedTile.linkSource ?? "manual")
-    setDraftFacetExcludedPluIds(selectedTile.facetBuilder?.excludedPluIds ?? [])
-    setDraftFacetExcludePercentEnabled(
-      selectedTile.facetBuilder?.excludePercentMismatchesEnabled ?? false
-    )
-  }, [selectedTile])
 
   useEffect(() => {
     async function loadSelectedImages() {
@@ -1064,74 +1063,9 @@ export default function CatalogueBuilderPage() {
     void createTilesFromFiles(files, false)
   }
 
-  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+  const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
-  }
-
-  function saveSelectedTile(overrides?: {
-    linkBuilderState?: LinkBuilderState
-    dynamicLink?: string
-    liveCapturedUrl?: string
-    linkSource?: "manual" | "live"
-  }) {
-    if (!project || !selectedTile) return
-    const liveCaptured = overrides?.liveCapturedUrl ?? draftLiveCapturedUrl
-    const linkSource = overrides?.linkSource ?? draftLinkSource
-    const updated = updateTile(project, selectedTile.id, {
-      title: draftTitle.trim() || undefined,
-      titleEditedManually: draftTitleEditedManually,
-      status: draftStatus,
-      notes: draftNotes.trim() || undefined,
-      dynamicLink: overrides?.dynamicLink?.trim() || draftLinkOutput.trim() || undefined,
-      liveCapturedUrl: liveCaptured.trim() || undefined,
-      linkSource,
-      linkBuilderState: overrides?.linkBuilderState ?? draftLinkState,
-      extractedPluFlags: draftExtractedFlags,
-      activeLinkMode: draftActiveLinkMode,
-      userHasChosenMode: draftUserHasChosenMode,
-      facetBuilder: {
-        selectedBrands: draftFacetBrands,
-        selectedArticleTypes: draftFacetArticleTypes,
-        excludedPluIds: draftFacetExcludedPluIds,
-        excludePercentMismatchesEnabled: draftFacetExcludePercentEnabled,
-      },
-    })
-    upsertProject(updated)
-  }
-
-  const commitAndSaveSelectedTile = useCallback(() => {
-    if (!selectedTile) return
-    const result = linkBuilderRef.current?.commitNow()
-    if (result) {
-      setDraftLinkState(result.state)
-      setDraftLinkOutput(result.output)
-    }
-    saveSelectedTile({
-      linkBuilderState: result?.state,
-      dynamicLink: result?.output,
-      liveCapturedUrl: draftLiveCapturedUrl,
-      linkSource: draftLinkSource,
-    })
-  }, [
-    selectedTile,
-    draftTitle,
-    draftTitleEditedManually,
-    draftStatus,
-    draftNotes,
-    draftLinkOutput,
-    draftLinkState,
-    draftExtractedFlags,
-    draftFacetBrands,
-    draftFacetArticleTypes,
-    draftFacetExcludedPluIds,
-    draftFacetExcludePercentEnabled,
-    draftLiveCapturedUrl,
-    draftLinkSource,
-    draftActiveLinkMode,
-    draftUserHasChosenMode,
-    project,
-  ])
-  beforeSelectRef.current = commitAndSaveSelectedTile
+  }, [])
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -2177,10 +2111,10 @@ export default function CatalogueBuilderPage() {
                         projectRegion={project?.region ?? "AU"}
                         datasetMeta={datasetMeta}
                         onOpenDatasetPanel={() => setDatasetUploadOpen(true)}
-                        draftFacetBrands={draftFacetBrands}
-                        draftFacetArticleTypes={draftFacetArticleTypes}
-                        setDraftFacetBrands={setDraftFacetBrands}
-                        setDraftFacetArticleTypes={setDraftFacetArticleTypes}
+                        draftFacetBrands={builderFacetBrands}
+                        draftFacetArticleTypes={builderFacetArticleTypes}
+                        setDraftFacetBrands={setBuilderFacetBrands}
+                        setDraftFacetArticleTypes={setBuilderFacetArticleTypes}
                         draftFacetExcludedPluIds={draftFacetExcludedPluIds}
                         setDraftFacetExcludedPluIds={setDraftFacetExcludedPluIds}
                         draftFacetExcludePercentEnabled={draftFacetExcludePercentEnabled}
@@ -2283,8 +2217,8 @@ export default function CatalogueBuilderPage() {
                             setDraftLinkSource("manual")
                             const nextPluCount = nextState.plus.filter((plu) => plu.trim().length > 0).length
                             const nextFacetQuery = buildFacetQueryFromSelections(
-                              draftFacetBrands,
-                              draftFacetArticleTypes
+                              builderFacetBrands,
+                              builderFacetArticleTypes
                             )
                             if (nextPluCount > 0) {
                               setDraftActiveLinkMode("plu")

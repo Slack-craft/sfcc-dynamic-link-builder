@@ -203,6 +203,49 @@ export default function CatalogueBuilderPage() {
     project?.id ?? null,
     project?.dataset?.id ?? null
   )
+
+  const mappingDebug = useMemo(() => {
+    if (!project) return undefined
+    const tileMatches = project.tileMatches ?? {}
+    const tiles = project.tiles ?? []
+    const mappingLines = Object.entries(tileMatches)
+      .slice(0, 20)
+      .map(([rectId, imageId]) => `${rectId} -> ${imageId}`)
+
+    const tileLines = tiles.slice(0, 20).map((tile) => {
+      const imageKey = tile.imageKey ?? ""
+      const rectId =
+        imageKey.length > 0
+          ? Object.entries(tileMatches).find(([, imageId]) => imageId === imageKey)?.[0] ?? "—"
+          : "—"
+      return [
+        tile.id,
+        `imageKey=${imageKey || "—"}`,
+        `file=${tile.originalFileName ?? "—"}`,
+        `rect=${rectId}`,
+      ].join(" | ")
+    })
+
+    const exportEntries = getExportSpreadOrder(
+      (project.pdfDetection as { export?: PdfExportEntry[] } | undefined)?.export ?? []
+    )
+    let rectCount = 0
+    exportEntries.forEach((entry) => {
+      const pages = Array.isArray(entry.pages) ? entry.pages : Object.values(entry.pages ?? {})
+      pages.forEach((page: PdfExportPage) => {
+        rectCount += page.boxes.length
+      })
+    })
+    const mappedRectCount = Object.keys(tileMatches).length
+
+    return {
+      tilesCount: tiles.length,
+      rectCount,
+      mappedRectCount,
+      tileLines,
+      mappingLines,
+    }
+  }, [project?.id, project?.tiles, project?.tileMatches, project?.pdfDetection])
   const { vm: draftVm, actions: draftActions } = useTileDraftState({
     project,
     selectedTile,
@@ -1482,6 +1525,7 @@ export default function CatalogueBuilderPage() {
         onClearLegacyExtensionData={clearLegacyExtensionData}
         onExportProjectData={handleExportProjectData}
         onOpenImportDialog={() => setDatasetImportOpen(true)}
+        mappingDebug={mappingDebug}
       />
 
       <Dialog open={datasetImportOpen} onOpenChange={setDatasetImportOpen}>

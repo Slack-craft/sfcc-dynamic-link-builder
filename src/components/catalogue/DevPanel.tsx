@@ -16,6 +16,13 @@ type DevPanelProps = {
   onClearLegacyExtensionData: () => void
   onExportProjectData: () => void
   onOpenImportDialog: () => void
+  mappingDebug?: {
+    tilesCount: number
+    rectCount: number
+    mappedRectCount: number
+    tileLines: string[]
+    mappingLines: string[]
+  }
 }
 
 export default function DevPanel({
@@ -26,6 +33,7 @@ export default function DevPanel({
   onClearLegacyExtensionData,
   onExportProjectData,
   onOpenImportDialog,
+  mappingDebug,
 }: DevPanelProps) {
   if (!isDev) return null
 
@@ -82,6 +90,26 @@ export default function DevPanel({
                 ) : (
                   <div>No facet columns detected.</div>
                 )}
+                {mappingDebug ? (
+                  <div className="space-y-2">
+                    <div className="text-[11px] uppercase tracking-wide">
+                      Tile/Rect Mapping
+                    </div>
+                    <pre className="max-h-64 overflow-auto rounded-md border border-border bg-muted/30 p-2 text-[11px] text-foreground">
+                      {[
+                        `Tiles: ${mappingDebug.tilesCount}`,
+                        `Rects: ${mappingDebug.rectCount}`,
+                        `Mapped rects: ${mappingDebug.mappedRectCount}`,
+                        "",
+                        "Tiles (first 20):",
+                        ...mappingDebug.tileLines,
+                        "",
+                        "Mappings (first 20):",
+                        ...mappingDebug.mappingLines,
+                      ].join("\n")}
+                    </pre>
+                  </div>
+                ) : null}
               </CollapsibleContent>
             </Collapsible>
           </div>

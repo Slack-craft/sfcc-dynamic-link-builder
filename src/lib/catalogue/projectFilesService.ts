@@ -187,17 +187,21 @@ export async function createTilesFromFiles(params: {
       toast.warning("Large upload detected. localStorage may hit limits with big image sets.")
     }
 
-    const existingIds = new Set(
-      (replaceExisting ? [] : project.tiles.map((tile) => tile.id)).map((id) =>
-        id.toLowerCase()
-      )
+    const existingTileKeys = new Set(
+      project.tiles.map((tile) => tile.id.toLowerCase())
     )
+    const existingIds = new Set(existingTileKeys)
 
     const tilesToAdd: Tile[] = []
     const newImageIds: string[] = []
+    let skippedCount = 0
     for (const file of files) {
       const baseName = stripExtension(file.name)
       const rawId = sanitizeTileId(baseName)
+      if (existingTileKeys.has(rawId.toLowerCase())) {
+        skippedCount += 1
+        continue
+      }
       let uniqueId = rawId
       let suffix = 2
       while (existingIds.has(uniqueId.toLowerCase())) {
@@ -255,7 +259,7 @@ export async function createTilesFromFiles(params: {
     return {
       replaced: 0,
       created: tilesToAdd.length,
-      skipped: 0,
+      skipped: skippedCount,
       replacedItems: [],
     }
   } finally {

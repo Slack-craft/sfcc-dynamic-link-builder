@@ -53,7 +53,7 @@ import {
 } from "@/lib/assetStore"
 import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
 import { type PdfRect } from "@/tools/catalogue-builder/pdfTextExtract"
-import { clearObjectUrlCache, getObjectUrl } from "@/lib/images/objectUrlCache"
+import { clearObjectUrlCache, getObjectUrl, revokeObjectUrl } from "@/lib/images/objectUrlCache"
 import { linkViaPreview, openPreview } from "@/lib/preview/previewService"
 import { parseCsvText } from "@/lib/catalogueDataset/parseCsv"
 import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransfer"
@@ -184,6 +184,8 @@ export default function CatalogueBuilderPage() {
   const liveLinkInputRef = useRef<HTMLInputElement | null>(null)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const replaceInputRef = useRef<HTMLInputElement | null>(null)
+  const replaceSingleInputRef = useRef<HTMLInputElement | null>(null)
+  const addImagesInputRef = useRef<HTMLInputElement | null>(null)
   const datasetInputRef = useRef<HTMLInputElement | null>(null)
   const datasetImportRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
@@ -844,6 +846,38 @@ export default function CatalogueBuilderPage() {
     )
   }
 
+  async function handleAddImagesChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files
+    if (!files || files.length === 0) return
+    const summary = await createTilesFromFiles(files, false)
+    event.target.value = ""
+    if (!summary) return
+    toast.info(
+      `Add Images: ${summary.created} created, ${summary.skipped} skipped duplicates.`
+    )
+  }
+
+  async function handleReplaceSingleImage(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file || !project || !selectedTile?.imageKey) return
+    await putAssetRecord({
+      assetId: selectedTile.imageKey,
+      projectId: project.id,
+      type: "image",
+      name: file.name,
+      blob: file,
+      createdAt: Date.now(),
+    })
+    revokeObjectUrl(selectedTile.imageKey)
+    const blob = await getImage(selectedTile.imageKey)
+    if (blob) {
+      const nextUrl = getObjectUrl(selectedTile.imageKey, blob)
+      setSelectedColorUrl(nextUrl)
+      setTileThumbUrls((prev) => ({ ...prev, [selectedTile.id]: nextUrl }))
+    }
+    event.target.value = ""
+  }
+
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     handleDropService({
       event,
@@ -1099,6 +1133,13 @@ export default function CatalogueBuilderPage() {
             <Button type="button" variant="outline" onClick={confirmReplaceAll}>
               Replace All Images
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => addImagesInputRef.current?.click()}
+            >
+              Add Images
+            </Button>
             <Button type="button" variant="outline" onClick={confirmClearAll}>
               Clear All Tiles
             </Button>
@@ -1298,6 +1339,23 @@ export default function CatalogueBuilderPage() {
                                   className="max-h-[360px] w-full h-auto rounded-md object-contain"
                                 />
                               </div>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => replaceSingleInputRef.current?.click()}
+                                >
+                                  Replace Image
+                                </Button>
+                                <Input
+                                  ref={replaceSingleInputRef}
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={handleReplaceSingleImage}
+                                  className="hidden"
+                                />
+                              </div>
                             </div>
                             <TileDetailsCard
                               title={draftTitle}
@@ -1481,6 +1539,14 @@ export default function CatalogueBuilderPage() {
             multiple
             accept="image/*"
             onChange={handleReplaceChange}
+            className="hidden"
+          />
+          <Input
+            ref={addImagesInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            onChange={handleAddImagesChange}
             className="hidden"
           />
         </CardContent>

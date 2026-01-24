@@ -26,6 +26,7 @@ export type Tile = {
   mappedHalf?: "left" | "right"
   mappedBoxIndex?: number
   originalFileName?: string
+  imageUpdatedSinceExtraction?: boolean
   linkBuilderState?: LinkBuilderState
   facetBuilder?: {
     selectedBrands: string[]

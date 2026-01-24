@@ -1,4 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -21,6 +23,8 @@ type TileDetailsCardProps = {
   finalDynamicLink: string
   notes: string
   onChangeNotes: (value: string) => void
+  imageUpdatedSinceExtraction?: boolean
+  onReExtractOffer?: () => void
 }
 
 export default function TileDetailsCard({
@@ -34,6 +38,8 @@ export default function TileDetailsCard({
   finalDynamicLink,
   notes,
   onChangeNotes,
+  imageUpdatedSinceExtraction,
+  onReExtractOffer,
 }: TileDetailsCardProps) {
   return (
     <Card>
@@ -93,6 +99,17 @@ export default function TileDetailsCard({
             </TooltipProvider>
           </div>
         </div>
+        {imageUpdatedSinceExtraction ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="secondary">Image updated</Badge>
+            <span>Re-extract recommended</span>
+            {onReExtractOffer ? (
+              <Button type="button" size="sm" variant="outline" onClick={onReExtractOffer}>
+                Re-extract offer
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         <div className="space-y-2">
           <Label htmlFor="tile-notes">Notes</Label>
           <Textarea

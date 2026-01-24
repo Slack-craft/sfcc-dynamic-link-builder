@@ -209,6 +209,7 @@ export default function useCatalogueActions({
       title: nextTitle,
       titleEditedManually: shouldSetTitle ? false : selectedTile.titleEditedManually,
       offerUpdatedAt: Date.now(),
+      imageUpdatedSinceExtraction: false,
     })
     upsertProject(updated)
     toast.success("Offer extracted.")

@@ -160,9 +160,18 @@ export async function createTilesFromFiles(params: {
         const nextImageAssetIds = Array.from(
           new Set([...(project.imageAssetIds ?? []), ...newImageIds])
         )
+        const replacedImageKeys = new Set(replacedItems.map((item) => item.imageKey))
+        const nextTiles =
+          replacedImageKeys.size > 0
+            ? project.tiles.map((tile) =>
+                tile.imageKey && replacedImageKeys.has(tile.imageKey)
+                  ? { ...tile, imageUpdatedSinceExtraction: true }
+                  : tile
+              )
+            : project.tiles
         upsertProject({
           ...project,
-          tiles: tilesToAdd.length > 0 ? [...project.tiles, ...tilesToAdd] : project.tiles,
+          tiles: tilesToAdd.length > 0 ? [...nextTiles, ...tilesToAdd] : nextTiles,
           imageAssetIds: nextImageAssetIds,
           updatedAt: new Date().toISOString(),
         })

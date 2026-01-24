@@ -868,6 +868,10 @@ export default function CatalogueBuilderPage() {
       blob: file,
       createdAt: Date.now(),
     })
+    const updated = updateTile(project, selectedTile.id, {
+      imageUpdatedSinceExtraction: true,
+    })
+    upsertProject(updated)
     revokeObjectUrl(selectedTile.imageKey)
     const blob = await getImage(selectedTile.imageKey)
     if (blob) {
@@ -1371,6 +1375,8 @@ export default function CatalogueBuilderPage() {
                               finalDynamicLink={activeOutput}
                               notes={draftNotes}
                               onChangeNotes={setDraftNotes}
+                              imageUpdatedSinceExtraction={selectedTile.imageUpdatedSinceExtraction}
+                              onReExtractOffer={reExtractOfferForSelected}
                             />
                           </div>
                           <div className="space-y-2">

@@ -1,6 +1,17 @@
+import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -25,6 +36,8 @@ type TileDetailsCardProps = {
   onChangeNotes: (value: string) => void
   imageUpdatedSinceExtraction?: boolean
   onReExtractOffer?: () => void
+  canReExtractOffer?: boolean
+  isReExtractingOffer?: boolean
 }
 
 export default function TileDetailsCard({
@@ -40,7 +53,11 @@ export default function TileDetailsCard({
   onChangeNotes,
   imageUpdatedSinceExtraction,
   onReExtractOffer,
+  canReExtractOffer = true,
+  isReExtractingOffer = false,
 }: TileDetailsCardProps) {
+  const [reExtractOpen, setReExtractOpen] = useState(false)
+
   return (
     <Card>
       <CardHeader className="py-4">
@@ -104,9 +121,45 @@ export default function TileDetailsCard({
             <Badge variant="secondary">Image updated</Badge>
             <span>Re-extract recommended</span>
             {onReExtractOffer ? (
-              <Button type="button" size="sm" variant="outline" onClick={onReExtractOffer}>
-                Re-extract offer
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setReExtractOpen(true)}
+                  disabled={!canReExtractOffer}
+                >
+                  Re-extract offer
+                </Button>
+                <AlertDialog open={reExtractOpen} onOpenChange={setReExtractOpen}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Re-extract offer from PDF?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        <div className="space-y-2">
+                          <div>Re-extract reads text from the matched PDF rectangle (not the tile image).</div>
+                          <div>If the PDF hasn’t been updated, results may not change.</div>
+                          <div>
+                            This may overwrite extracted fields (e.g., PLUs / detected % / detected brands / detected title). It will not change your link builder settings or notes.
+                          </div>
+                        </div>
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => {
+                          setReExtractOpen(false)
+                          onReExtractOffer()
+                        }}
+                        disabled={isReExtractingOffer}
+                      >
+                        Re-extract
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </>
             ) : null}
           </div>
         ) : null}

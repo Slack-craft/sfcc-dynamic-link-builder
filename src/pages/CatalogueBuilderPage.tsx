@@ -176,6 +176,7 @@ export default function CatalogueBuilderPage() {
     replacedItems: Array<{ fileName: string; tileId: string; imageKey: string }>
   } | null>(null)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const linkBuilderRef = useRef<DynamicLinkBuilderHandle | null>(null)
   const activeLinkModeRef = useRef<"plu" | "facet" | "live">("plu")
   const userHasChosenModeRef = useRef(false)
@@ -269,13 +270,16 @@ export default function CatalogueBuilderPage() {
   })
   const {
     draftTitle,
+    draftTitleEditedManually,
     draftStatus,
     draftNotes,
     draftLinkState,
+    draftLinkOutput,
     draftExtractedFlags,
     draftFacetExcludedPluIds,
     draftFacetExcludePercentEnabled,
     draftLiveCapturedUrl,
+    draftLinkSource,
   } = draftVm
   const {
     setDraftTitle,
@@ -341,7 +345,7 @@ export default function CatalogueBuilderPage() {
   }, [project?.id, project?.pdfAssetIds])
 
 
-  const projectBar = (
+  const projectBar = () => (
     <div className="flex flex-wrap items-center gap-2">
       <Label className="text-xs font-medium uppercase text-muted-foreground">Project</Label>
       <select
@@ -362,6 +366,9 @@ export default function CatalogueBuilderPage() {
           </option>
         ))}
       </select>
+      <Badge variant={isSaving ? "secondary" : isDirty ? "destructive" : "secondary"}>
+        {isSaving ? "Saving..." : isDirty ? "Unsaved changes" : "Saved"}
+      </Badge>
       <Button type="button" size="sm" onClick={() => setNewProjectOpen(true)}>
         New Project
       </Button>
@@ -598,6 +605,58 @@ export default function CatalogueBuilderPage() {
     liveCapturedUrl: draftLiveCapturedUrl,
     setLiveCapturedUrl: setDraftLiveCapturedUrl,
   })
+
+  const isDirty = useMemo(() => {
+    if (!selectedTile) return false
+    const normalize = (value?: string) => (value ?? "").trim()
+    const storedLinkState = selectedTile.linkBuilderState ?? createEmptyLinkBuilderState()
+    const storedExtractedFlags =
+      selectedTile.extractedPluFlags ?? createEmptyExtractedFlags()
+    const storedFacetBrands = selectedTile.facetBuilder?.selectedBrands ?? []
+    const storedFacetArticleTypes = selectedTile.facetBuilder?.selectedArticleTypes ?? []
+    const storedExcludedPluIds = selectedTile.facetBuilder?.excludedPluIds ?? []
+    const sameArray = (a: readonly unknown[], b: readonly unknown[]) =>
+      a.length === b.length && a.every((value, index) => value === b[index])
+    const linkStateSame =
+      JSON.stringify(draftLinkState) === JSON.stringify(storedLinkState)
+    const extractedSame =
+      JSON.stringify(draftExtractedFlags) === JSON.stringify(storedExtractedFlags)
+    return (
+      normalize(draftTitle) !== normalize(selectedTile.title) ||
+      draftTitleEditedManually !== (selectedTile.titleEditedManually ?? false) ||
+      draftStatus !== selectedTile.status ||
+      normalize(draftNotes) !== normalize(selectedTile.notes) ||
+      normalize(draftLinkOutput) !== normalize(selectedTile.dynamicLink ?? "") ||
+      !linkStateSame ||
+      !extractedSame ||
+      normalize(draftLiveCapturedUrl) !== normalize(selectedTile.liveCapturedUrl ?? "") ||
+      draftLinkSource !== (selectedTile.linkSource ?? "manual") ||
+      draftActiveLinkMode !== (selectedTile.activeLinkMode ?? "plu") ||
+      draftUserHasChosenMode !== (selectedTile.userHasChosenMode ?? false) ||
+      !sameArray(builderFacetBrands, storedFacetBrands) ||
+      !sameArray(builderFacetArticleTypes, storedFacetArticleTypes) ||
+      !sameArray(draftFacetExcludedPluIds, storedExcludedPluIds) ||
+      draftFacetExcludePercentEnabled !==
+        (selectedTile.facetBuilder?.excludePercentMismatchesEnabled ?? false)
+    )
+  }, [
+    selectedTile,
+    draftTitle,
+    draftTitleEditedManually,
+    draftStatus,
+    draftNotes,
+    draftLinkOutput,
+    draftLinkState,
+    draftExtractedFlags,
+    draftLiveCapturedUrl,
+    draftLinkSource,
+    draftActiveLinkMode,
+    draftUserHasChosenMode,
+    builderFacetBrands,
+    builderFacetArticleTypes,
+    draftFacetExcludedPluIds,
+    draftFacetExcludePercentEnabled,
+  ])
 
   useEffect(() => {
     activeLinkModeRef.current = draftActiveLinkMode
@@ -991,7 +1050,17 @@ export default function CatalogueBuilderPage() {
     toast.success("Legacy Extension data cleared for this project.")
   }
 
-  useGlobalShortcuts({ onSave: commitAndSaveSelectedTile })
+  const handleSave = useCallback(async () => {
+    if (isSaving) return
+    setIsSaving(true)
+    try {
+      await Promise.resolve(commitAndSaveSelectedTile())
+    } finally {
+      setIsSaving(false)
+    }
+  }, [commitAndSaveSelectedTile, isSaving])
+
+  useGlobalShortcuts({ onSave: handleSave })
 
   useEffect(() => {
     const handler = () => {
@@ -1011,7 +1080,7 @@ export default function CatalogueBuilderPage() {
             Create a catalogue project to get started.
           </p>
         </div>
-        {projectBar}
+        {projectBar()}
         <Card>
           <CardHeader>
             <CardTitle>New project</CardTitle>
@@ -1099,7 +1168,7 @@ export default function CatalogueBuilderPage() {
         projectName="Catalogue Builder"
         onBackToProjects={() => undefined}
         onOpenTileDetection={() => undefined}
-        rightSlot={projectBar}
+        rightSlot={projectBar()}
       />
       <Separator />
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1306,8 +1375,8 @@ export default function CatalogueBuilderPage() {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <CardTitle>{selectedTile.id}</CardTitle>
                         <div className="flex flex-wrap items-center gap-2">
-                          <Button type="button" onClick={commitAndSaveSelectedTile}>
-                            Save (Ctrl+S)
+                          <Button type="button" onClick={handleSave} disabled={isSaving}>
+                            {isSaving ? "Saving..." : isDirty ? "Save (Ctrl+S)" : "Saved"}
                           </Button>
                           <Button
                             type="button"
@@ -1377,6 +1446,7 @@ export default function CatalogueBuilderPage() {
                               onChangeNotes={setDraftNotes}
                               imageUpdatedSinceExtraction={selectedTile.imageUpdatedSinceExtraction}
                               onReExtractOffer={reExtractOfferForSelected}
+                              canReExtractOffer={selectedTile.pdfMappingStatus !== "missing"}
                             />
                           </div>
                           <div className="space-y-2">

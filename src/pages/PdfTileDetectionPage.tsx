@@ -90,6 +90,7 @@ export default function PdfTileDetectionPage({
   const [hoverRectIndex, setHoverRectIndex] = useState<number | null>(null)
   const [selectedRectIndex, setSelectedRectIndex] = useState<number | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [replacePdfOpen, setReplacePdfOpen] = useState(false)
   const [viewportCssSize, setViewportCssSize] = useState({ width: 0, height: 0 })
   const [showAllImages, setShowAllImages] = useState(false)
   const [showMatched, setShowMatched] = useState(false)
@@ -422,10 +423,6 @@ export default function PdfTileDetectionPage({
     const file = event.target.files?.[0]
     event.target.value = ""
     if (!file || !currentProject || !selectedPdfEntry) return
-    const confirmed = window.confirm(
-      "This will replace the PDF file for this slot. Existing rectangles and tile matches will be preserved. If the new PDF layout differs, you may need to adjust rectangles."
-    )
-    if (!confirmed) return
     await putAssetRecord({
       assetId: selectedPdfEntry.id,
       projectId: currentProject.id,
@@ -1762,15 +1759,41 @@ export default function PdfTileDetectionPage({
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Label>PDF list</Label>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => replacePdfInputRef.current?.click()}
-                    disabled={!selectedPdfEntry}
-                  >
-                    Replace PDF
-                  </Button>
+                  <AlertDialog open={replacePdfOpen} onOpenChange={setReplacePdfOpen}>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={!selectedPdfEntry}
+                      >
+                        Replace PDF
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Replace PDF file?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          <div className="space-y-2">
+                            <div>This will replace the PDF for this slot.</div>
+                            <div>All existing rectangles and tile matches will be preserved.</div>
+                            <div>If the new PDF layout differs, rectangle alignment may need adjustment.</div>
+                          </div>
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => {
+                            setReplacePdfOpen(false)
+                            replacePdfInputRef.current?.click()
+                          }}
+                        >
+                          Replace PDF
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                   <Input
                     ref={replacePdfInputRef}
                     type="file"

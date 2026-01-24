@@ -60,6 +60,24 @@ import { hasExtensionPing } from "@/lib/preview/hasExtension"
 import { parseCsvText, type CsvRow } from "@/lib/catalogueDataset/parseCsv"
 import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
 import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransfer"
+import {
+  formatMappingInfo,
+  parseTileMapping,
+  sanitizeTileId,
+  slugifyLabel,
+  stripExtension,
+} from "@/lib/catalogue/format"
+import { buildFacetQueryFromSelections } from "@/lib/catalogue/facets"
+import { buildPlusArray, createEmptyExtractedFlags } from "@/lib/catalogue/plu"
+import {
+  buildDynamicOutputFromState,
+  buildPreviewUrlFromState,
+  createEmptyLinkBuilderState,
+  getBrandStub,
+  isBrandPath,
+  stripLegacyExtensionFromTile,
+} from "@/lib/catalogue/link"
+import { findRectById, getExportSpreadOrder, getFirstPageExport } from "@/lib/catalogue/pdf"
  
 import type {
   CatalogueProject,
@@ -72,7 +90,6 @@ import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 
 const MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
 const PDF_DETECTION_STORAGE_KEY = "sca_pdf_tile_project_v1"
-const MAX_PLUS_FIELDS = 20
 const MAX_EXTRACTED_PLUS = 20
 const isDev = (import.meta as any).env?.DEV
 
@@ -225,232 +242,6 @@ type DatasetCache = {
   version: number
 }
 
-function sanitizeTileId(value: string) {
-  const trimmed = value.trim()
-  if (!trimmed) return "tile"
-  const sanitized = trimmed
-    .replace(/\s+/g, "-")
-    .replace(/[^a-zA-Z0-9-_]/g, "")
-  return sanitized || "tile"
-}
-
-function stripExtension(filename: string) {
-  return filename.replace(/\.[^/.]+$/, "")
-}
-
-function parseTileMapping(fileName: string) {
-  const pageMatch = fileName.match(/-p(\d{1,2})-/i)
-  const boxMatch = fileName.match(/-box(\d{2})-/i)
-  if (!pageMatch || !boxMatch) return null
-  const imgPage = Number(pageMatch[1])
-  const boxOrder = Number(boxMatch[1])
-  if (!Number.isFinite(imgPage) || !Number.isFinite(boxOrder)) return null
-  const half: "left" | "right" = imgPage % 2 === 1 ? "left" : "right"
-  const spreadIndex = Math.ceil(imgPage / 2)
-  return {
-    imgPage,
-    half,
-    spreadIndex,
-    boxOrder,
-  }
-}
-
-function formatMappingInfo(fileName: string) {
-  const mapping = parseTileMapping(fileName)
-  if (!mapping) return "p?? box??"
-  const pageLabel = String(mapping.imgPage).padStart(2, "0")
-  const boxLabel = String(mapping.boxOrder).padStart(2, "0")
-  return `p${pageLabel} box${boxLabel}`
-}
-
-function slugifyLabel(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[’']/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-}
-
-function buildIdFilter(pluValues: string[]) {
-  const joined = pluValues.join("%7c")
-  return `?prefn1=id&prefv1=${joined}`
-}
-
-function buildFacetQueryFromSelections(
-  selectedBrands: string[],
-  selectedArticleTypes: string[]
-) {
-  const selected: Record<string, string[]> = {}
-  if (selectedBrands.length > 0) {
-    selected.brand = selectedBrands
-  }
-  if (selectedArticleTypes.length > 0) {
-    selected.adArticleType = selectedArticleTypes
-  }
-  const entries = Object.entries(selected).filter(([, values]) => values.length > 0)
-  if (entries.length === 0) return ""
-  const params = entries.map(([facetKey, values], index) => {
-    const prefIndex = index + 1
-    const outputKey = facetKey === "brand" ? "srgBrand" : facetKey
-    const encodedValues = encodeURIComponent(values.join("|"))
-    return `prefn${prefIndex}=${encodeURIComponent(outputKey)}&prefv${prefIndex}=${encodedValues}`
-  })
-  return `?${params.join("&")}&sz=36`
-}
-
-function buildPlusArray(values: string[]) {
-  return Array.from({ length: Math.max(MAX_PLUS_FIELDS, values.length) }, (_, index) => {
-    return values[index] ?? ""
-  })
-}
-
-function isBrandPath(pathname: string) {
-  return /^\/brands\/[^/]+$/i.test(pathname)
-}
-
-function getBrandStub(pathname: string) {
-  const match = pathname.match(/^\/brands\/([^/]+)/i)
-  return match?.[1] ?? ""
-}
-
-function buildDynamicOutputFromState(state: LinkBuilderState, derivedQuery = "") {
-  const cleanedPLUs = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
-
-  if (cleanedPLUs.length === 1 && !derivedQuery) {
-    return `$Url('Product-Show','pid','${cleanedPLUs[0]}')$`
-  }
-
-  const baseValue = state.category?.value ?? state.brand?.value ?? ""
-  if (!baseValue) {
-    if (cleanedPLUs.length > 1 || derivedQuery) {
-      return "Select a Category or Brand to generate the base link."
-    }
-    return "Select a Category or Brand, or enter one PLU to generate a Product link."
-  }
-
-  let built = `$Url('Search-Show','cgid','${baseValue}')$`
-  if (derivedQuery) {
-    built += derivedQuery
-    return built
-  }
-  if (cleanedPLUs.length > 1) {
-    built += buildIdFilter(cleanedPLUs)
-    return built
-  }
-  return built
-}
-
-function buildPreviewUrlFromState(
-  state: LinkBuilderState,
-  scope?: Region,
-  derivedQuery = "",
-  ignorePlu = false
-) {
-  const domain =
-    scope === "NZ"
-      ? "https://staging.supercheapauto.co.nz"
-      : "https://staging.supercheapauto.com.au"
-
-  const cleanedPLUs = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
-  const isSinglePlu = !ignorePlu && cleanedPLUs.length === 1
-  const isMultiPlu = !ignorePlu && cleanedPLUs.length > 1
-
-  if (isSinglePlu) {
-    return `${domain}/p/sca-product/${cleanedPLUs[0]}.html`
-  }
-
-  if (isMultiPlu) {
-    return `${domain}/${buildIdFilter(cleanedPLUs)}`
-  }
-
-  const previewPathOverride = state.previewPathOverride ?? ""
-  let derivedPath = previewPathOverride
-  if (!derivedPath && state.brand) {
-    derivedPath = `/brands/${slugifyLabel(state.brand.label)}`
-  }
-  if (!derivedPath && state.category?.value === "catalogue-onsale") {
-    derivedPath = "/catalogue-out-now"
-  }
-
-  if (derivedPath) {
-    return `${domain}${derivedPath}${derivedQuery}`
-  }
-
-  if (derivedQuery) {
-    return `${domain}${derivedQuery}`
-  }
-
-  return domain
-}
-
-function getExportSpreadOrder(entries: PdfExportEntry[]) {
-  const withParsed = entries.map((entry, index) => {
-    const match = entry.filename?.match(/P(\d{1,2})/i)
-    const order = match ? Number(match[1]) : Number.NaN
-    return { entry, index, order }
-  })
-  if (withParsed.some((item) => Number.isFinite(item.order))) {
-    return withParsed
-      .sort((a, b) => {
-        const aValid = Number.isFinite(a.order)
-        const bValid = Number.isFinite(b.order)
-        if (aValid && bValid) return (a.order as number) - (b.order as number)
-        if (aValid) return -1
-        if (bValid) return 1
-        return a.index - b.index
-      })
-      .map((item) => item.entry)
-  }
-  return entries
-}
-
-function getFirstPageExport(entry: PdfExportEntry) {
-  if (Array.isArray(entry.pages)) {
-    return entry.pages[0]
-  }
-  const keys = Object.keys(entry.pages)
-  const firstKey = keys[0]
-  return firstKey ? entry.pages[firstKey] : undefined
-}
-
-function findRectById(entries: PdfExportEntry[], rectId: string) {
-  for (const entry of entries) {
-    const pages = Array.isArray(entry.pages) ? entry.pages : Object.values(entry.pages)
-    for (const page of pages) {
-      const box = page.boxes.find((item) => item.rectId === rectId)
-      if (box) {
-        return { entry, page, box }
-      }
-    }
-  }
-  return null
-}
-
-function createEmptyLinkBuilderState(): LinkBuilderState {
-  return {
-    category: { label: "Catalog", value: "catalogue-onsale" },
-    brand: null,
-    plus: Array.from({ length: MAX_PLUS_FIELDS }, () => ""),
-    previewPathOverride: "",
-    captureMode: "path+filters",
-  }
-}
-
-function stripLegacyExtensionFromTile(tile: Tile): Tile {
-  const state = tile.linkBuilderState
-  if (!state || typeof state !== "object") return tile
-  if (!("extension" in state)) return tile
-  const { extension: _legacyExtension, ...rest } = state as LinkBuilderState & {
-    extension?: string
-  }
-  return { ...tile, linkBuilderState: rest }
-}
-
-function createEmptyExtractedFlags() {
-  return Array.from({ length: MAX_PLUS_FIELDS }, () => false)
-}
-
 async function deleteImagesForProject(projectId: string) {
   await clearImagesForProject(projectId)
 }
@@ -539,7 +330,7 @@ export default function CatalogueBuilderPage() {
   const project = useMemo(() => {
     return (
       projectsState.projects.find(
-        (item) => item.id === projectsState.activeProjectId
+        (item: CatalogueProject) => item.id === projectsState.activeProjectId
       ) ?? null
     )
   }, [projectsState])
@@ -649,7 +440,7 @@ export default function CatalogueBuilderPage() {
         {projectsState.projects.length === 0 ? (
           <option value="">No projects</option>
         ) : null}
-        {projectsState.projects.map((item) => (
+        {projectsState.projects.map((item: CatalogueProject) => (
           <option key={item.id} value={item.id}>
             {item.name}
           </option>
@@ -755,7 +546,7 @@ export default function CatalogueBuilderPage() {
   function upsertProject(updated: CatalogueProject) {
     persistProjectsState((prev) => ({
       ...prev,
-      projects: prev.projects.map((item) =>
+      projects: prev.projects.map((item: CatalogueProject) =>
         item.id === updated.id ? updated : item
       ),
     }))
@@ -770,7 +561,7 @@ export default function CatalogueBuilderPage() {
 
   function deleteProject(projectId: string) {
     persistProjectsState((prev) => {
-      const projects = prev.projects.filter((item) => item.id !== projectId)
+      const projects = prev.projects.filter((item: CatalogueProject) => item.id !== projectId)
       const activeProjectId =
         prev.activeProjectId === projectId ? projects[0]?.id ?? null : prev.activeProjectId
       return { projects, activeProjectId }
@@ -827,18 +618,21 @@ export default function CatalogueBuilderPage() {
     const summary = exportEntries.map((entry, index) => {
       const assetId = entry.pdfId
       const pages = entry?.pages ?? {}
-      const boxes = Array.isArray(pages)
-        ? pages.flatMap((page) => page.boxes ?? [])
-        : Object.values(pages).flatMap((page) => page.boxes ?? [])
+      const pageList: Array<{
+        boxes?: Array<{ include?: boolean; orderIndex?: number }>
+        pageWidth?: number
+        pageHeight?: number
+      }> = Array.isArray(pages) ? pages : (Object.values(pages) as Array<{
+        boxes?: Array<{ include?: boolean; orderIndex?: number }>
+        pageWidth?: number
+        pageHeight?: number
+      }>)
+      const boxes = pageList.flatMap((page) => page.boxes ?? [])
       const included = boxes.filter((box) => box.include ?? true)
       const ordered = included.filter((box) => Number.isFinite(box.orderIndex))
-      const hasSize = Array.isArray(pages)
-        ? pages.some(
-            (page) => Number.isFinite(page.pageWidth) && Number.isFinite(page.pageHeight)
-          )
-        : Object.values(pages).some(
-            (page) => Number.isFinite(page.pageWidth) && Number.isFinite(page.pageHeight)
-          )
+      const hasSize = pageList.some(
+        (page) => Number.isFinite(page.pageWidth) && Number.isFinite(page.pageHeight)
+      )
       return {
         assetId,
         name: pdfAssetNames[assetId] ?? entry?.filename ?? `PDF ${index + 1}`,
@@ -1097,7 +891,7 @@ export default function CatalogueBuilderPage() {
 
   async function createTilesFromFiles(fileList: FileList, replaceExisting: boolean) {
     if (!project) return
-    const files = Array.from(fileList).sort((a, b) =>
+    const files = Array.from(fileList).sort((a: File, b: File) =>
       a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
     )
 
@@ -2016,14 +1810,18 @@ export default function CatalogueBuilderPage() {
 
         const pageWidth = page.getViewport({ scale: 1 }).width
         const withOrder = pageEntry.boxes.filter(
-          (item) => (item.include ?? true) && Number.isFinite(item.orderIndex)
+          (item: PdfExportBox) => (item.include ?? true) && Number.isFinite(item.orderIndex)
         )
         const leftBucket = withOrder
-          .filter((item) => item.xPdf + item.wPdf / 2 < pageWidth / 2)
-          .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+          .filter((item: PdfExportBox) => item.xPdf + item.wPdf / 2 < pageWidth / 2)
+          .sort(
+            (a: PdfExportBox, b: PdfExportBox) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)
+          )
         const rightBucket = withOrder
-          .filter((item) => item.xPdf + item.wPdf / 2 >= pageWidth / 2)
-          .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+          .filter((item: PdfExportBox) => item.xPdf + item.wPdf / 2 >= pageWidth / 2)
+          .sort(
+            (a: PdfExportBox, b: PdfExportBox) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)
+          )
         const bucket = mapping.half === "left" ? leftBucket : rightBucket
         const box = bucket[mapping.boxOrder - 1]
         if (!box) {
@@ -2035,7 +1833,7 @@ export default function CatalogueBuilderPage() {
             pdfMappingReason: `No rect for box (L:${leftBucket.length} R:${rightBucket.length})`,
           }
           if (isDev && missingLogCount < 20) {
-            const orderIndices = bucket.map((item) => item.orderIndex ?? 0)
+            const orderIndices = bucket.map((item: PdfExportBox) => item.orderIndex ?? 0)
             const minOrder =
               orderIndices.length > 0 ? Math.min(...orderIndices) : null
             const maxOrder =
@@ -2137,7 +1935,7 @@ export default function CatalogueBuilderPage() {
     }
     setProjectsState((prev) => ({
       ...prev,
-      projects: prev.projects.map((item) =>
+      projects: prev.projects.map((item: CatalogueProject) =>
         item.id === project.id
           ? { ...item, tiles: cleanedTiles, updatedAt: new Date().toISOString() }
           : item

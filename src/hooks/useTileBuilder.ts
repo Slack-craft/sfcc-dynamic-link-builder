@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { Region, Tile } from "@/tools/catalogue-builder/catalogueTypes"
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
+import { buildFacetQueryFromSelections } from "@/lib/catalogue/facets"
 import { buildPreviewUrlFromState, createEmptyLinkBuilderState } from "@/lib/catalogue/link"
 
 type UseTileBuilderParams = {
   selectedTile: Tile | null
   linkState: LinkBuilderState
-  facetQuery: string
   projectRegion?: Region
   liveCapturedUrl: string
   setLiveCapturedUrl: (value: string) => void
@@ -15,7 +15,6 @@ type UseTileBuilderParams = {
 export default function useTileBuilder({
   selectedTile,
   linkState,
-  facetQuery,
   projectRegion,
   liveCapturedUrl,
   setLiveCapturedUrl,
@@ -24,11 +23,15 @@ export default function useTileBuilder({
     "plu"
   )
   const [draftUserHasChosenMode, setDraftUserHasChosenMode] = useState(false)
+  const [draftFacetBrands, setDraftFacetBrands] = useState<string[]>([])
+  const [draftFacetArticleTypes, setDraftFacetArticleTypes] = useState<string[]>([])
 
   useEffect(() => {
     if (!selectedTile) {
       setDraftActiveLinkMode("plu")
       setDraftUserHasChosenMode(false)
+      setDraftFacetBrands([])
+      setDraftFacetArticleTypes([])
       return
     }
     const nextLinkState = selectedTile.linkBuilderState ?? createEmptyLinkBuilderState()
@@ -38,7 +41,14 @@ export default function useTileBuilder({
     const defaultMode = tileHasPlu ? "plu" : "facet"
     setDraftActiveLinkMode(storedChosen ? storedMode ?? defaultMode : defaultMode)
     setDraftUserHasChosenMode(storedChosen)
+    setDraftFacetBrands(selectedTile.facetBuilder?.selectedBrands ?? [])
+    setDraftFacetArticleTypes(selectedTile.facetBuilder?.selectedArticleTypes ?? [])
   }, [selectedTile])
+
+  const facetQuery = useMemo(
+    () => buildFacetQueryFromSelections(draftFacetBrands, draftFacetArticleTypes),
+    [draftFacetBrands, draftFacetArticleTypes]
+  )
 
   const pluCount = useMemo(
     () => linkState.plus.filter((plu) => plu.trim().length > 0).length,
@@ -107,10 +117,15 @@ export default function useTileBuilder({
     setDraftActiveLinkMode,
     draftUserHasChosenMode,
     setDraftUserHasChosenMode,
+    draftFacetBrands,
+    setDraftFacetBrands,
+    draftFacetArticleTypes,
+    setDraftFacetArticleTypes,
     isPluAvailable,
     isFacetAvailable,
     isLiveAvailable,
     previewUrl,
     onPreviewUrlChange,
+    facetQuery,
   }
 }

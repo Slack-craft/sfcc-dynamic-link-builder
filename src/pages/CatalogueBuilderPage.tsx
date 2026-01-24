@@ -279,8 +279,6 @@ export default function CatalogueBuilderPage() {
   const [draftExtractedFlags, setDraftExtractedFlags] = useState<boolean[]>(() =>
     createEmptyExtractedFlags()
   )
-  const [draftFacetBrands, setDraftFacetBrands] = useState<string[]>([])
-  const [draftFacetArticleTypes, setDraftFacetArticleTypes] = useState<string[]>([])
   const [draftFacetExcludedPluIds, setDraftFacetExcludedPluIds] = useState<string[]>([])
   const [draftFacetExcludePercentEnabled, setDraftFacetExcludePercentEnabled] = useState(false)
   const [tileThumbUrls, setTileThumbUrls] = useState<Record<string, string>>({})
@@ -618,24 +616,24 @@ export default function CatalogueBuilderPage() {
     }
     return []
   }, [selectedTile?.offer?.brand?.label, selectedTile?.offer?.detectedBrands])
-  const facetQuery = useMemo(
-    () => buildFacetQueryFromSelections(draftFacetBrands, draftFacetArticleTypes),
-    [draftFacetBrands, draftFacetArticleTypes]
-  )
   const {
     draftActiveLinkMode,
     setDraftActiveLinkMode,
     draftUserHasChosenMode,
     setDraftUserHasChosenMode,
+    draftFacetBrands,
+    setDraftFacetBrands,
+    draftFacetArticleTypes,
+    setDraftFacetArticleTypes,
     isPluAvailable,
     isFacetAvailable,
     isLiveAvailable,
     previewUrl,
     onPreviewUrlChange,
+    facetQuery,
   } = useTileBuilder({
     selectedTile,
     linkState: draftLinkState,
-    facetQuery,
     projectRegion: project?.region,
     liveCapturedUrl: draftLiveCapturedUrl,
     setLiveCapturedUrl: setDraftLiveCapturedUrl,
@@ -749,8 +747,6 @@ export default function CatalogueBuilderPage() {
     setDraftExtractedFlags(selectedTile.extractedPluFlags ?? createEmptyExtractedFlags())
     setDraftLiveCapturedUrl(selectedTile.liveCapturedUrl ?? "")
     setDraftLinkSource(selectedTile.linkSource ?? "manual")
-    setDraftFacetBrands(selectedTile.facetBuilder?.selectedBrands ?? [])
-    setDraftFacetArticleTypes(selectedTile.facetBuilder?.selectedArticleTypes ?? [])
     setDraftFacetExcludedPluIds(selectedTile.facetBuilder?.excludedPluIds ?? [])
     setDraftFacetExcludePercentEnabled(
       selectedTile.facetBuilder?.excludePercentMismatchesEnabled ?? false

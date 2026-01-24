@@ -8,6 +8,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import CatalogueHeader from "@/components/catalogue/CatalogueHeader"
 import DevPanel from "@/components/catalogue/DevPanel"
+import TileListPanel from "@/components/catalogue/TileListPanel"
+import TileDetailsCard from "@/components/catalogue/TileDetailsCard"
 import {
   Tooltip,
   TooltipContent,
@@ -2450,26 +2452,18 @@ export default function CatalogueBuilderPage() {
             </div>
           ) : (
             <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-medium uppercase text-muted-foreground">Tiles</div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={missingTilesCount === 0}
-                    onClick={() => setShowMissingOnly((prev) => !prev)}
-                  >
-                    {showMissingOnly ? "Show all" : "Show missing only"}
-                  </Button>
-                </div>
+              <TileListPanel
+                missingTilesCount={missingTilesCount}
+                showMissingOnly={showMissingOnly}
+                onToggleShowMissingOnly={() => setShowMissingOnly((prev) => !prev)}
+              >
                 <TileList
                   tiles={displayTiles}
                   selectedTileId={selectedTileId}
                   tileThumbUrls={tileThumbUrls}
                   onSelect={handleSelectTile}
                 />
-              </div>
+              </TileListPanel>
               <div>
                 {selectedTile ? (
                   <Card>
@@ -2515,82 +2509,21 @@ export default function CatalogueBuilderPage() {
                                 />
                               </div>
                             </div>
-                            <Card>
-                              <CardHeader className="py-4">
-                                <CardTitle className="text-sm">Tile Details</CardTitle>
-                              </CardHeader>
-                              <CardContent className="space-y-3">
-                                <div className="space-y-2">
-                                  <Label htmlFor="tile-title">Title</Label>
-                                  <Input
-                                    id="tile-title"
-                                    value={draftTitle}
-                                    onChange={(event) => {
-                                      setDraftTitle(event.target.value)
-                                      setDraftTitleEditedManually(true)
-                                    }}
-                                    placeholder="Tile title"
-                                  />
-                                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                                    <span>
-                                      Brand: {selectedTile.offer?.brand?.label ?? "-"}
-                                    </span>
-                                    <span>
-                                      % Off: {selectedTile.offer?.percentOff?.raw ?? "-"}
-                                    </span>
-                                    <span>
-                                      Detected Brands:{" "}
-                                      {detectedBrands.length > 0 ? detectedBrands.join(", ") : "-"}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="grid gap-3 md:grid-cols-2">
-                                  <div className="space-y-2">
-                                    <Label htmlFor="tile-status">Status</Label>
-                                    <select
-                                      id="tile-status"
-                                      value={draftStatus}
-                                      onChange={(event) => setDraftStatus(event.target.value as TileStatus)}
-                                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                                    >
-                                      <option value="todo">To do</option>
-                                      <option value="in_progress">In progress</option>
-                                      <option value="done">Done</option>
-                                      <option value="needs_review">Needs review</option>
-                                    </select>
-                                  </div>
-                                  <div className="space-y-2">
-                                    <Label>Final Dynamic Link</Label>
-                                    <TooltipProvider delayDuration={200}>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <div className="h-10 w-full rounded-md border border-input bg-background px-3 text-xs text-muted-foreground flex items-center overflow-hidden">
-                                            <span className="truncate font-mono">
-                                              {activeOutput || "—"}
-                                            </span>
-                                          </div>
-                                        </TooltipTrigger>
-                                        {activeOutput ? (
-                                          <TooltipContent className="max-w-[420px] break-all">
-                                            {activeOutput}
-                                          </TooltipContent>
-                                        ) : null}
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                  </div>
-                                </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor="tile-notes">Notes</Label>
-                                  <Textarea
-                                    id="tile-notes"
-                                    value={draftNotes}
-                                    onChange={(event) => setDraftNotes(event.target.value)}
-                                    placeholder="Notes for this tile"
-                                    className="min-h-[120px]"
-                                  />
-                                </div>
-                              </CardContent>
-                            </Card>
+                            <TileDetailsCard
+                              title={draftTitle}
+                              onChangeTitle={(value) => {
+                                setDraftTitle(value)
+                                setDraftTitleEditedManually(true)
+                              }}
+                              brandLabel={selectedTile.offer?.brand?.label ?? null}
+                              percentOffRaw={selectedTile.offer?.percentOff?.raw ?? null}
+                              detectedBrands={detectedBrands}
+                              status={draftStatus}
+                              onChangeStatus={setDraftStatus}
+                              finalDynamicLink={activeOutput}
+                              notes={draftNotes}
+                              onChangeNotes={setDraftNotes}
+                            />
                           </div>
                           <div className="space-y-2">
                             {awaitingManualLink ? (

@@ -511,7 +511,9 @@ export async function handleImportProjectData(params: {
     setDatasetImportOpen(false)
     toast.success(`Imported project: ${imported.name}`)
   } catch (error) {
-    toast.error("Failed to import project data.")
+    const message =
+      error instanceof Error ? error.message : "Failed to import project data."
+    toast.error(`Import failed: ${message}`)
   } finally {
     setDatasetImporting(false)
   }

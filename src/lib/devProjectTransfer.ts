@@ -1,9 +1,10 @@
 import JSZip from "jszip"
 import type { CatalogueProject } from "@/tools/catalogue-builder/catalogueTypes"
 import type { AssetRecord, DatasetRecord } from "@/lib/assetStore"
+import { CURRENT_SCHEMA_VERSION, migrateImportPayload } from "@/lib/importExport/migrations"
 
 export type ProjectExportManifest = {
-  schemaVersion: 1
+  schemaVersion: number
   exportedAt: string
   project: CatalogueProject
   assets: Array<{
@@ -29,7 +30,7 @@ export async function exportProjectToZip(params: {
   const { project, assets, dataset } = params
   const zip = new JSZip()
   const manifest: ProjectExportManifest = {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
     project,
     assets: assets.map((asset) => ({
@@ -75,10 +76,7 @@ export async function importProjectFromZip(file: File): Promise<{
     throw new Error("Export missing manifest.json")
   }
   const manifestRaw = await manifestEntry.async("text")
-  const manifest = JSON.parse(manifestRaw) as ProjectExportManifest
-  if (!manifest || manifest.schemaVersion !== 1) {
-    throw new Error("Unsupported export schema")
-  }
+  const manifest = migrateImportPayload(JSON.parse(manifestRaw))
 
   const assetBlobs = new Map<string, Blob>()
   for (const asset of manifest.assets) {

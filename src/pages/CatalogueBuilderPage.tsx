@@ -63,6 +63,7 @@ import useProjectDataset from "@/hooks/useProjectDataset"
 import useTileSelection from "@/hooks/useTileSelection"
 import useTileBuilder from "@/hooks/useTileBuilder"
 import useTileDraftState from "@/hooks/useTileDraftState"
+import useGlobalShortcuts, { isTypingTarget } from "@/hooks/useGlobalShortcuts"
 import {
   createTilesFromFiles as createTilesFromFilesService,
   getDatasetKey,
@@ -914,16 +915,6 @@ export default function CatalogueBuilderPage() {
     }
   }, [])
 
-  function isTypingTarget(target: EventTarget | null) {
-    const el = target as HTMLElement | null
-    if (!el) return false
-    const tag = el.tagName?.toLowerCase()
-    if (tag === "input" || tag === "textarea" || tag === "select") return true
-    if (el.isContentEditable) return true
-    const role = el.getAttribute?.("role")
-    return role === "combobox" || role === "listbox" || role === "textbox"
-  }
-
   useEffect(() => {
     if (!awaitingManualLink) return
 
@@ -1537,18 +1528,7 @@ export default function CatalogueBuilderPage() {
     toast.success("Legacy Extension data cleared for this project.")
   }
 
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      const isCmdOrCtrl = event.metaKey || event.ctrlKey
-      if (isCmdOrCtrl && event.key.toLowerCase() === "s") {
-        event.preventDefault()
-        commitAndSaveSelectedTile()
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [commitAndSaveSelectedTile])
+  useGlobalShortcuts({ onSave: commitAndSaveSelectedTile })
 
   useEffect(() => {
     const handler = () => {

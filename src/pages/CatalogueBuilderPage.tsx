@@ -60,6 +60,7 @@ import { hasExtensionPing } from "@/lib/preview/hasExtension"
 import { parseCsvText } from "@/lib/catalogueDataset/parseCsv"
 import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransfer"
 import useProjectDataset from "@/hooks/useProjectDataset"
+import useTileSelection from "@/hooks/useTileSelection"
 import {
   formatMappingInfo,
   parseTileMapping,
@@ -267,7 +268,6 @@ export default function CatalogueBuilderPage() {
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [newProjectName, setNewProjectName] = useState("")
   const [newProjectRegion, setNewProjectRegion] = useState<Region>("AU")
-  const [selectedTileId, setSelectedTileId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState("")
   const [draftTitleEditedManually, setDraftTitleEditedManually] = useState(false)
   const [draftStatus, setDraftStatus] = useState<TileStatus>("todo")
@@ -316,6 +316,7 @@ export default function CatalogueBuilderPage() {
   const datasetImportRef = useRef<HTMLInputElement | null>(null)
   const isUploadingImagesRef = useRef(false)
   const lastUploadSignatureRef = useRef<string | null>(null)
+  const beforeSelectRef = useRef<(() => void) | null>(null)
 
   const project = useMemo(() => {
     return (
@@ -324,6 +325,14 @@ export default function CatalogueBuilderPage() {
       ) ?? null
     )
   }, [projectsState])
+
+  const {
+    selectedTileId,
+    setSelectedTileId,
+    selectedTile,
+    selectTile,
+    selectTileByOffset,
+  } = useTileSelection(project, beforeSelectRef)
 
   const { datasetMeta, datasetRowsRef, facetColumnList } = useProjectDataset(
     project?.id ?? null,
@@ -604,10 +613,6 @@ export default function CatalogueBuilderPage() {
     }
     return summary
   }, [project, pdfAssetNames])
-  const selectedTile = useMemo(
-    () => tiles.find((tile) => tile.id === selectedTileId) ?? null,
-    [tiles, selectedTileId]
-  )
   const detectedBrands = useMemo(() => {
     if (selectedTile?.offer?.detectedBrands?.length) {
       return selectedTile.offer.detectedBrands
@@ -755,20 +760,6 @@ export default function CatalogueBuilderPage() {
       cancelled = true
     }
   }, [project?.id, tileImageSignature])
-
-  useEffect(() => {
-    if (!project) {
-      setSelectedTileId(null)
-      return
-    }
-    if (!selectedTileId && project.tiles.length > 0) {
-      setSelectedTileId(project.tiles[0].id)
-      return
-    }
-    if (selectedTileId && !selectedTile) {
-      setSelectedTileId(project.tiles[0]?.id ?? null)
-    }
-  }, [project, selectedTileId, selectedTile])
 
   useEffect(() => {
     if (!selectedTile) {
@@ -1206,6 +1197,7 @@ export default function CatalogueBuilderPage() {
     draftUserHasChosenMode,
     project,
   ])
+  beforeSelectRef.current = commitAndSaveSelectedTile
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -1431,17 +1423,6 @@ export default function CatalogueBuilderPage() {
     }
   }
 
-  const handleSelectTile = useCallback(
-    (tileId: string) => {
-      if (tileId === selectedTileId) return
-      if (selectedTile) {
-        commitAndSaveSelectedTile()
-      }
-      setSelectedTileId(tileId)
-    },
-    [selectedTile, selectedTileId, commitAndSaveSelectedTile]
-  )
-
   function reExtractOfferForSelected() {
     if (!project || !selectedTile) return
     if (!selectedTile.extractedText) {
@@ -1459,16 +1440,6 @@ export default function CatalogueBuilderPage() {
     })
     upsertProject(updated)
     toast.success("Offer extracted.")
-  }
-
-  function selectTileByOffset(offset: number) {
-    if (!selectedTile) return
-    commitAndSaveSelectedTile()
-    const currentIndex = tiles.findIndex((tile) => tile.id === selectedTile.id)
-    if (currentIndex === -1) return
-    const nextIndex = currentIndex + offset
-    if (nextIndex < 0 || nextIndex >= tiles.length) return
-    setSelectedTileId(tiles[nextIndex].id)
   }
 
   function confirmReplaceAll() {
@@ -2198,7 +2169,7 @@ export default function CatalogueBuilderPage() {
                   tiles={displayTiles}
                   selectedTileId={selectedTileId}
                   tileThumbUrls={tileThumbUrls}
-                  onSelect={handleSelectTile}
+                  onSelect={selectTile}
                 />
               </TileListPanel>
               <div>

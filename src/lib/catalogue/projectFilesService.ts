@@ -11,6 +11,13 @@ type ToastApi = {
   info?: (message: string) => void
 }
 
+export type ReplaceSummary = {
+  replaced: number
+  created: number
+  skipped: number
+  replacedItems: Array<{ fileName: string; tileId: string; imageKey: string }>
+}
+
 export function buildUploadSignature(files: File[]) {
   return files
     .map((file) => `${file.name}:${file.size}:${file.lastModified}`)
@@ -31,6 +38,7 @@ export async function createTilesFromFiles(params: {
   deleteImagesForProject: (projectId: string) => Promise<void>
   clearObjectUrlCache: () => void
   putImage: (projectId: string, name: string, blob: Blob) => Promise<string>
+  putAssetRecord: (record: AssetRecord) => Promise<void>
   stripExtension: (value: string) => string
   sanitizeTileId: (value: string) => string
   createEmptyLinkBuilderState: () => LinkBuilderState
@@ -39,7 +47,7 @@ export async function createTilesFromFiles(params: {
   setSelectedTileId: (tileId: string | null) => void
   toast: ToastApi
   isDev: boolean
-}) {
+}): Promise<ReplaceSummary | null> {
   const {
     project,
     fileList,
@@ -50,6 +58,7 @@ export async function createTilesFromFiles(params: {
     deleteImagesForProject,
     clearObjectUrlCache,
     putImage,
+    putAssetRecord,
     stripExtension,
     sanitizeTileId,
     createEmptyLinkBuilderState,
@@ -59,26 +68,73 @@ export async function createTilesFromFiles(params: {
     toast,
     isDev,
   } = params
-  if (!project) return
+  if (!project) return null
   const files = Array.from(fileList).sort((a: File, b: File) =>
     a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
   )
 
-  if (files.length === 0) return
+  if (files.length === 0) return null
   const uploadSignature = buildUploadSignature(files)
   if (isUploadingImagesRef.current) {
     if (lastUploadSignatureRef.current === uploadSignature) {
-      return
+      return null
     }
-    return
+    return null
   }
   isUploadingImagesRef.current = true
   lastUploadSignatureRef.current = uploadSignature
 
   try {
     if (replaceExisting) {
-      await deleteImagesForProject(project.id)
-      clearObjectUrlCache()
+      const existingTilesByKey = new Map<string, Tile>()
+      project.tiles.forEach((tile) => {
+        existingTilesByKey.set(tile.id.toLowerCase(), tile)
+        if (tile.originalFileName) {
+          existingTilesByKey.set(stripExtension(tile.originalFileName).toLowerCase(), tile)
+        }
+      })
+
+      let replacedCount = 0
+      const replacedItems: Array<{ fileName: string; tileId: string; imageKey: string }> = []
+      for (const file of files) {
+        const fileKey = stripExtension(file.name).toLowerCase()
+        const matchedTile = existingTilesByKey.get(fileKey)
+        if (!matchedTile || !matchedTile.imageKey) continue
+        await putAssetRecord({
+          assetId: matchedTile.imageKey,
+          projectId: project.id,
+          type: "image",
+          name: file.name,
+          blob: file,
+          createdAt: Date.now(),
+        })
+        replacedCount += 1
+        replacedItems.push({
+          fileName: file.name,
+          tileId: matchedTile.id,
+          imageKey: matchedTile.imageKey,
+        })
+      }
+
+      if (replacedCount > 0) {
+        clearObjectUrlCache()
+        upsertProject({
+          ...project,
+          updatedAt: new Date().toISOString(),
+        })
+      }
+      if (isDev) {
+        console.log("[setup] replace images", {
+          files: files.length,
+          replaced: replacedCount,
+        })
+      }
+      return {
+        replaced: replacedCount,
+        created: 0,
+        skipped: Math.max(0, files.length - replacedCount),
+        replacedItems,
+      }
     }
 
     const totalSize = files.reduce((sum, file) => sum + file.size, 0)
@@ -151,6 +207,12 @@ export async function createTilesFromFiles(params: {
       })
     }
     setSelectedTileId(tilesToAdd[0]?.id ?? updated.tiles[0]?.id ?? null)
+    return {
+      replaced: 0,
+      created: tilesToAdd.length,
+      skipped: 0,
+      replacedItems: [],
+    }
   } finally {
     isUploadingImagesRef.current = false
     lastUploadSignatureRef.current = null
@@ -184,7 +246,7 @@ export async function handleSetupPdfUpload(params: {
 
 export function handleSetupImageUpload(params: {
   event: React.ChangeEvent<HTMLInputElement>
-  createTilesFromFiles: (files: FileList, replaceExisting: boolean) => Promise<void>
+  createTilesFromFiles: (files: FileList, replaceExisting: boolean) => Promise<ReplaceSummary | null>
 }) {
   const { event, createTilesFromFiles } = params
   const files = event.target.files
@@ -399,7 +461,7 @@ export async function handleImportProjectData(params: {
 
 export function handleUploadChange(params: {
   event: React.ChangeEvent<HTMLInputElement>
-  createTilesFromFiles: (files: FileList, replaceExisting: boolean) => Promise<void>
+  createTilesFromFiles: (files: FileList, replaceExisting: boolean) => Promise<ReplaceSummary | null>
 }) {
   const { event, createTilesFromFiles } = params
   const files = event.target.files
@@ -408,20 +470,21 @@ export function handleUploadChange(params: {
   event.target.value = ""
 }
 
-export function handleReplaceChange(params: {
+export async function handleReplaceChange(params: {
   event: React.ChangeEvent<HTMLInputElement>
-  createTilesFromFiles: (files: FileList, replaceExisting: boolean) => Promise<void>
-}) {
+  createTilesFromFiles: (files: FileList, replaceExisting: boolean) => Promise<ReplaceSummary | null>
+}): Promise<ReplaceSummary | null> {
   const { event, createTilesFromFiles } = params
   const files = event.target.files
-  if (!files || files.length === 0) return
-  void createTilesFromFiles(files, true)
+  if (!files || files.length === 0) return null
+  const summary = await createTilesFromFiles(files, true)
   event.target.value = ""
+  return summary
 }
 
 export function handleDrop(params: {
   event: React.DragEvent<HTMLDivElement>
-  createTilesFromFiles: (files: FileList, replaceExisting: boolean) => Promise<void>
+  createTilesFromFiles: (files: FileList, replaceExisting: boolean) => Promise<ReplaceSummary | null>
 }) {
   const { event, createTilesFromFiles } = params
   event.preventDefault()

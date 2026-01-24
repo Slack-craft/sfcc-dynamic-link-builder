@@ -168,6 +168,13 @@ export default function CatalogueBuilderPage() {
   const [datasetImportOpen, setDatasetImportOpen] = useState(false)
   const [datasetImporting, setDatasetImporting] = useState(false)
   const [devDebugOpen, setDevDebugOpen] = useState(false)
+  const [lastReplaceLog, setLastReplaceLog] = useState<{
+    at: string
+    replaced: number
+    created: number
+    skipped: number
+    replacedItems: Array<{ fileName: string; tileId: string; imageKey: string }>
+  } | null>(null)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
   const linkBuilderRef = useRef<DynamicLinkBuilderHandle | null>(null)
   const activeLinkModeRef = useRef<"plu" | "facet" | "live">("plu")
@@ -717,7 +724,7 @@ export default function CatalogueBuilderPage() {
   ])
 
   async function createTilesFromFiles(fileList: FileList, replaceExisting: boolean) {
-    await createTilesFromFilesService({
+    return await createTilesFromFilesService({
       project,
       fileList,
       replaceExisting,
@@ -727,6 +734,7 @@ export default function CatalogueBuilderPage() {
       deleteImagesForProject,
       clearObjectUrlCache,
       putImage,
+      putAssetRecord,
       stripExtension,
       sanitizeTileId,
       createEmptyLinkBuilderState,
@@ -812,11 +820,28 @@ export default function CatalogueBuilderPage() {
     })
   }
 
-  function handleReplaceChange(event: React.ChangeEvent<HTMLInputElement>) {
-    handleReplaceChangeService({
+  async function handleReplaceChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const summary = await handleReplaceChangeService({
       event,
       createTilesFromFiles,
     })
+    if (!summary) return
+    if (isDev) {
+      setLastReplaceLog({
+        at: new Date().toISOString(),
+        replaced: summary.replaced,
+        created: summary.created,
+        skipped: summary.skipped,
+        replacedItems: summary.replacedItems,
+      })
+    }
+    if (summary.replaced === 0 && summary.created === 0) {
+      toast.info("No matching images found to replace.")
+      return
+    }
+    toast.success(
+      `Replace completed: ${summary.replaced} replaced, ${summary.created} created, ${summary.skipped} skipped.`
+    )
   }
 
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
@@ -1526,6 +1551,7 @@ export default function CatalogueBuilderPage() {
         onExportProjectData={handleExportProjectData}
         onOpenImportDialog={() => setDatasetImportOpen(true)}
         mappingDebug={mappingDebug}
+        replaceLog={lastReplaceLog}
       />
 
       <Dialog open={datasetImportOpen} onOpenChange={setDatasetImportOpen}>

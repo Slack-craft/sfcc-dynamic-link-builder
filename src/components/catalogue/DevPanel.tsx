@@ -23,6 +23,13 @@ type DevPanelProps = {
     tileLines: string[]
     mappingLines: string[]
   }
+  replaceLog?: {
+    at: string
+    replaced: number
+    created: number
+    skipped: number
+    replacedItems: Array<{ fileName: string; tileId: string; imageKey: string }>
+  } | null
 }
 
 export default function DevPanel({
@@ -34,6 +41,7 @@ export default function DevPanel({
   onExportProjectData,
   onOpenImportDialog,
   mappingDebug,
+  replaceLog,
 }: DevPanelProps) {
   if (!isDev) return null
 
@@ -106,6 +114,24 @@ export default function DevPanel({
                         "",
                         "Mappings (first 20):",
                         ...mappingDebug.mappingLines,
+                      ].join("\n")}
+                    </pre>
+                  </div>
+                ) : null}
+                {replaceLog ? (
+                  <div className="space-y-2">
+                    <div className="text-[11px] uppercase tracking-wide">
+                      Replace Images Log
+                    </div>
+                    <pre className="max-h-64 overflow-auto rounded-md border border-border bg-muted/30 p-2 text-[11px] text-foreground">
+                      {[
+                        `Last run: ${replaceLog.at}`,
+                        `Replaced: ${replaceLog.replaced} | Created: ${replaceLog.created} | Skipped: ${replaceLog.skipped}`,
+                        "",
+                        "Replaced files:",
+                        ...replaceLog.replacedItems.map(
+                          (item) => `${item.fileName} -> ${item.tileId} (${item.imageKey})`
+                        ),
                       ].join("\n")}
                     </pre>
                   </div>

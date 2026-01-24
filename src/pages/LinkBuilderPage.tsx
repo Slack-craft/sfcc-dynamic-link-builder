@@ -11,8 +11,8 @@ import {
 import { Button } from "@/components/ui/button"
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 import { BRAND_OPTIONS } from "@/data/brands"
-import { extensionRequest } from "@/lib/preview/extensionRequest"
 import { hasExtensionPing } from "@/lib/preview/hasExtension"
+import { linkViaPreview, openPreview } from "@/lib/preview/previewService"
 import { toast } from "sonner"
 
 function slugifyLabel(value: string) {
@@ -277,41 +277,30 @@ export default function LinkBuilderPage() {
   }, [awaitingManualLink, builderState])
 
   const handleOpenPreview = useCallback(async () => {
-    if (!previewUrl) return
-    if (extensionStatus === "unavailable") {
-      window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
-      return
-    }
-    toast.info("Opening preview...")
-    try {
-      await extensionRequest("SCA_OPEN_PREVIEW_WINDOW", { url: previewUrl }, 600)
-      setExtensionStatus("available")
-    } catch {
-      setExtensionStatus("unavailable")
-      window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
-    }
+    await openPreview({
+      url: previewUrl,
+      extensionStatus,
+      setExtensionStatus,
+      onOpenWindow: () => {
+        window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
+      },
+      toastInfo: toast.info,
+    })
   }, [extensionStatus, previewUrl])
 
   const handleLinkViaPreview = useCallback(async () => {
-    if (!previewUrl) return
-    const manualFallback = () => {
-      window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
-      setAwaitingManualLink(true)
-      toast.info("Copy the URL in the preview (Ctrl+L, Ctrl+C), then click back into the app to paste into Live Link.")
-    }
-
-    if (extensionStatus === "unavailable") {
-      manualFallback()
-      return
-    }
-    toast.info("Opening preview... Close the window to capture Live Link.")
-    try {
-      await extensionRequest("SCA_OPEN_LINK_VIA_PREVIEW", { url: previewUrl }, 600)
-      setExtensionStatus("available")
-    } catch {
-      setExtensionStatus("unavailable")
-      manualFallback()
-    }
+    await linkViaPreview({
+      url: previewUrl,
+      extensionStatus,
+      setExtensionStatus,
+      onOpenWindow: () => {
+        window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
+      },
+      onManualFallback: () => {
+        setAwaitingManualLink(true)
+      },
+      toastInfo: toast.info,
+    })
   }, [extensionStatus, previewUrl])
 
   return (

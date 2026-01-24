@@ -55,8 +55,8 @@ import { extractTextFromRect, loadPdfDocument, type PdfRect } from "@/tools/cata
 import { parseOfferText } from "@/lib/extraction/parseOfferText"
 import { extractPlusFromPdfText } from "@/lib/extraction/pluUtils"
 import { clearObjectUrlCache, getObjectUrl } from "@/lib/images/objectUrlCache"
-import { extensionRequest } from "@/lib/preview/extensionRequest"
 import { hasExtensionPing } from "@/lib/preview/hasExtension"
+import { linkViaPreview, openPreview } from "@/lib/preview/previewService"
 import { parseCsvText } from "@/lib/catalogueDataset/parseCsv"
 import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransfer"
 import useProjectDataset from "@/hooks/useProjectDataset"
@@ -1382,45 +1382,34 @@ export default function CatalogueBuilderPage() {
   }
 
   async function handleOpenPreview() {
-    const url = previewUrl
-    if (!url) return
-    if (extensionStatus === "unavailable") {
-      window.open(url, "scaPreview", "popup,width=1200,height=800")
-      return
-    }
-    toast.info("Opening preview...")
-    try {
-      await extensionRequest("SCA_OPEN_PREVIEW_WINDOW", { url }, 600)
-      setExtensionStatus("available")
-    } catch (error) {
-      setExtensionStatus("unavailable")
-      window.open(url, "scaPreview", "popup,width=1200,height=800")
-    }
+    await openPreview({
+      url: previewUrl,
+      extensionStatus,
+      setExtensionStatus,
+      onOpenWindow: () => {
+        window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
+      },
+      toastInfo: toast.info,
+    })
   }
 
   async function handleLinkViaPreview() {
-    const url = previewUrl
-    if (!url) return
-    setDraftActiveLinkMode("live")
-    setDraftUserHasChosenMode(true)
-    const startManualFallback = () => {
-      window.open(url, "scaPreview", "popup,width=1200,height=800")
-      setAwaitingManualLink(true)
-      toast.info("Copy the URL in the preview (Ctrl+L, Ctrl+C), then click back into the app to paste into Live Link.")
-    }
-
-    if (extensionStatus === "unavailable") {
-      startManualFallback()
-      return
-    }
-    toast.info("Opening preview... Close the window to capture Live Link.")
-    try {
-      await extensionRequest("SCA_OPEN_LINK_VIA_PREVIEW", { url }, 600)
-      setExtensionStatus("available")
-    } catch (error) {
-      setExtensionStatus("unavailable")
-      startManualFallback()
-    }
+    await linkViaPreview({
+      url: previewUrl,
+      extensionStatus,
+      setExtensionStatus,
+      onBeforeOpen: () => {
+        setDraftActiveLinkMode("live")
+        setDraftUserHasChosenMode(true)
+      },
+      onOpenWindow: () => {
+        window.open(previewUrl, "scaPreview", "popup,width=1200,height=800")
+      },
+      onManualFallback: () => {
+        setAwaitingManualLink(true)
+      },
+      toastInfo: toast.info,
+    })
   }
 
   function reExtractOfferForSelected() {

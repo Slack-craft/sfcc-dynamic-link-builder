@@ -116,6 +116,7 @@ export function createProject(name: string, region: Region): CatalogueProject {
     stage: "setup",
     createdAt: now,
     updatedAt: now,
+    hasRunMassExtractFromPdf: false,
     imageAssetIds: [],
     pdfAssetIds: [],
     dataset: null,

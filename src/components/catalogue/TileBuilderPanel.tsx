@@ -146,6 +146,7 @@ export default function TileBuilderPanel({
           onFacetExcludePercentEnabledChange={setDraftFacetExcludePercentEnabled}
           detectedBrands={detectedBrands}
           detectedOfferPercent={detectedOfferPercent}
+          allowAutoSeedDetectedBrands={!selectedTile.userHasChosenMode}
           liveLinkUrl={draftLiveCapturedUrl}
           onLiveLinkChange={setDraftLiveCapturedUrl}
           liveLinkEditable={liveLinkEditable}

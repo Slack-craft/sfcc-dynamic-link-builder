@@ -304,6 +304,7 @@ type DynamicLinkBuilderProps = {
   onFacetExcludePercentEnabledChange?: (next: boolean) => void
   detectedBrands?: string[]
   detectedOfferPercent?: number
+  allowAutoSeedDetectedBrands?: boolean
   manualBaseActions?: React.ReactNode
   liveLinkUrl?: string
   onLiveLinkChange?: (value: string) => void
@@ -351,6 +352,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
       onFacetExcludePercentEnabledChange,
       detectedBrands,
       detectedOfferPercent,
+      allowAutoSeedDetectedBrands,
       manualBaseActions,
       liveLinkUrl,
       onLiveLinkChange,
@@ -1158,6 +1160,7 @@ const DynamicLinkBuilder = forwardRef<DynamicLinkBuilderHandle, DynamicLinkBuild
             onActiveLinkModeChange?.("plu")
           }}
           detectedBrands={detectedBrands}
+          allowAutoSeedDetectedBrands={allowAutoSeedDetectedBrands}
           detectedOfferPercent={detectedOfferPercent}
           pluValues={plus}
         />

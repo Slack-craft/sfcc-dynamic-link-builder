@@ -69,6 +69,7 @@ type FacetMatchesCardProps = {
   onConvertToPlu?: (pluIds: string[]) => void
   detectedOfferPercent?: number
   detectedBrands?: string[]
+  allowAutoSeedDetectedBrands?: boolean
   previewUrlValue?: string
   onPreviewUrlChange?: (value: string) => void
   activeLinkMode?: "plu" | "facet" | "live"
@@ -383,6 +384,7 @@ export function FacetMatchesCard({
   onConvertToPlu,
   detectedOfferPercent,
   detectedBrands = [],
+  allowAutoSeedDetectedBrands = true,
   previewUrlValue,
   onPreviewUrlChange,
   activeLinkMode = "plu",
@@ -457,6 +459,7 @@ export function FacetMatchesCard({
 
   useEffect(() => {
     if (!dataset) return
+    if (!allowAutoSeedDetectedBrands) return
     if (selectedBrands.length > 0) return
     if (matchedBrandValues.length === 0) return
     const detectedKey = matchedBrandValues.join("|")

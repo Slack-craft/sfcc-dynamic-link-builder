@@ -168,6 +168,7 @@ export default function CatalogueBuilderPage() {
   const [datasetImportOpen, setDatasetImportOpen] = useState(false)
   const [datasetImporting, setDatasetImporting] = useState(false)
   const [devDebugOpen, setDevDebugOpen] = useState(false)
+  const [massExtractConfirmOpen, setMassExtractConfirmOpen] = useState(false)
   const [lastReplaceLog, setLastReplaceLog] = useState<{
     at: string
     replaced: number
@@ -1184,11 +1185,42 @@ export default function CatalogueBuilderPage() {
             <Button
               type="button"
               variant="outline"
-              onClick={extractPlusFromPdf}
+              onClick={() => {
+                if (!project?.hasRunMassExtractFromPdf) {
+                  void extractPlusFromPdf()
+                  return
+                }
+                setMassExtractConfirmOpen(true)
+              }}
               disabled={pdfExtractRunning}
             >
-              Extract PLUs from PDF
+              Extract Data from PDF
             </Button>
+            <AlertDialog
+              open={massExtractConfirmOpen}
+              onOpenChange={setMassExtractConfirmOpen}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Re-extract data from PDF?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Re-extracting can overwrite extracted data and auto-detection defaults. This
+                    can’t be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      setMassExtractConfirmOpen(false)
+                      void extractPlusFromPdf()
+                    }}
+                  >
+                    Re-extract
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <Button type="button" variant="outline" onClick={confirmReplaceAll}>
               Replace All Images
             </Button>

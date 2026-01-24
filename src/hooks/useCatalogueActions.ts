@@ -593,11 +593,13 @@ export default function useCatalogueActions({
         ...project,
         tiles: resolvedTiles,
         updatedAt: new Date().toISOString(),
+        hasRunMassExtractFromPdf: true,
       }
       upsertProject(updated)
+      const updatedCount = processedTiles
+      const skippedCount = missingMappings
       toast.success(
-        `${processedTiles} tiles processed, ${tilesWithPlus} with PLUs, ${totalPlus} PLUs filled, ` +
-          `${missingMappings} missing mappings (spreads ${spreadsFound}, no export ${missingNoExport}, no rect ${missingNoRect}, no match ${missingNoMatch}).`
+        `Extract complete: processed ${processedTiles} tiles (updated ${updatedCount}, skipped ${skippedCount} missing matches).`
       )
     } catch (error) {
       toast.error("PDF extraction failed. Check the PDF asset and detection map.")

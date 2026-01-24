@@ -68,6 +68,7 @@ export type CatalogueProject = {
   stage: ProjectStage
   createdAt: string
   updatedAt: string
+  hasRunMassExtractFromPdf?: boolean
   imageAssetIds: string[]
   pdfAssetIds: string[]
   dataset?: ProjectDatasetMeta | null

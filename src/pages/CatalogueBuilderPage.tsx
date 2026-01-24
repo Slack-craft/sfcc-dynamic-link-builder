@@ -6,13 +6,15 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import CatalogueHeader from "@/components/catalogue/CatalogueHeader"
+import DevPanel from "@/components/catalogue/DevPanel"
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { FileText, Info, Trash2, Upload, Eraser } from "lucide-react"
+import { Eraser, Info } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -32,18 +34,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
+import DatasetDropdownMenu from "@/components/catalogue/DatasetDropdownMenu"
 import { toast } from "sonner"
 import DynamicLinkBuilder, { type DynamicLinkBuilderHandle } from "@/tools/link-builder/DynamicLinkBuilder"
 import { BRAND_OPTIONS } from "@/data/brands"
@@ -2275,15 +2266,12 @@ export default function CatalogueBuilderPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">Catalogue Builder</h2>
-          <p className="text-sm text-muted-foreground">
-            Manage tiles for your catalogue project.
-          </p>
-        </div>
-        {projectBar}
-      </div>
+      <CatalogueHeader
+        projectName="Catalogue Builder"
+        onBackToProjects={() => undefined}
+        onOpenTileDetection={() => undefined}
+        rightSlot={projectBar}
+      />
       <Separator />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -2323,54 +2311,13 @@ export default function CatalogueBuilderPage() {
             <Button type="button" variant="outline" onClick={confirmClearAll}>
               Clear All Tiles
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline">
-                  Project Dataset
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() => setDatasetUploadOpen(true)}
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  {project.dataset ? "Upload/Replace Dataset" : "Upload Dataset"}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setDatasetDetailsOpen(true)}
-                  disabled={!project.dataset}
-                >
-                  <FileText className="mr-2 h-4 w-4" />
-                  View Dataset Details
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => setDatasetClearOpen(true)}
-                  disabled={!project.dataset}
-                  className="text-destructive"
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Clear Dataset
-                </DropdownMenuItem>
-                {isDev ? (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={clearLegacyExtensionData}>
-                      <Eraser className="mr-2 h-4 w-4" />
-                      Clear legacy Extension data (DEV)
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleExportProjectData}>
-                      <Upload className="mr-2 h-4 w-4" />
-                      Export Project Data (DEV)
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setDatasetImportOpen(true)}>
-                      <FileText className="mr-2 h-4 w-4" />
-                      Import Project Data (DEV)
-                    </DropdownMenuItem>
-                  </>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <DatasetDropdownMenu
+              datasetLoaded={Boolean(project.dataset)}
+              datasetName={project.dataset?.filename}
+              onUpload={() => setDatasetUploadOpen(true)}
+              onViewDetails={() => setDatasetDetailsOpen(true)}
+              onClear={() => setDatasetClearOpen(true)}
+            />
           </div>
         ) : null}
       </div>
@@ -2986,57 +2933,15 @@ export default function CatalogueBuilderPage() {
         </DialogContent>
       </Dialog>
 
-      {isDev ? (
-        <div className="space-y-2">
-          <Separator />
-          <Card className="border-dashed">
-            <CardHeader className="py-3">
-              <div className="flex items-center justify-between gap-2">
-                <CardTitle className="text-sm">Dev / Debug</CardTitle>
-                <Collapsible open={devDebugOpen} onOpenChange={setDevDebugOpen}>
-                  <CollapsibleTrigger asChild>
-                    <Button type="button" size="sm" variant="outline">
-                      {devDebugOpen ? "Hide" : "Show"}
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-3 space-y-2 text-xs text-muted-foreground">
-                    <div>
-                      Facet columns detected:{" "}
-                      <span className="font-medium text-foreground">
-                        {facetColumnList.length}
-                      </span>
-                    </div>
-                    {facetColumnList.length > 0 ? (
-                      <div className="space-y-1">
-                        <div className="text-[11px] uppercase tracking-wide">
-                          Columns
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {facetColumnList.slice(0, 24).map((col) => (
-                            <span
-                              key={col}
-                              className="rounded-full border border-border px-2 py-0.5 text-[11px]"
-                            >
-                              {col}
-                            </span>
-                          ))}
-                          {facetColumnList.length > 24 ? (
-                            <span className="text-[11px]">
-                              +{facetColumnList.length - 24} more
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : (
-                      <div>No facet columns detected.</div>
-                    )}
-                  </CollapsibleContent>
-                </Collapsible>
-              </div>
-            </CardHeader>
-          </Card>
-        </div>
-      ) : null}
+      <DevPanel
+        isDev={isDev}
+        facetColumnList={facetColumnList}
+        devDebugOpen={devDebugOpen}
+        onDevDebugOpenChange={setDevDebugOpen}
+        onClearLegacyExtensionData={clearLegacyExtensionData}
+        onExportProjectData={handleExportProjectData}
+        onOpenImportDialog={() => setDatasetImportOpen(true)}
+      />
 
       <Dialog open={datasetImportOpen} onOpenChange={setDatasetImportOpen}>
         <DialogContent>

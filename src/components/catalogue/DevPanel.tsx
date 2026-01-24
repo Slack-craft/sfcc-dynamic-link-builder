@@ -69,7 +69,7 @@ export default function DevPanel({
                       Columns
                     </div>
                     <div className="flex flex-wrap gap-1">
-                      {facetColumnList.slice(0, 24).map((col) => (
+                      {facetColumnList.map((col) => (
                         <span
                           key={col}
                           className="rounded-full border border-border px-2 py-0.5 text-[11px]"
@@ -77,11 +77,6 @@ export default function DevPanel({
                           {col}
                         </span>
                       ))}
-                      {facetColumnList.length > 24 ? (
-                        <span className="text-[11px]">
-                          +{facetColumnList.length - 24} more
-                        </span>
-                      ) : null}
                     </div>
                   </div>
                 ) : (

@@ -57,9 +57,9 @@ import { extractPlusFromPdfText } from "@/lib/extraction/pluUtils"
 import { clearObjectUrlCache, getObjectUrl } from "@/lib/images/objectUrlCache"
 import { extensionRequest } from "@/lib/preview/extensionRequest"
 import { hasExtensionPing } from "@/lib/preview/hasExtension"
-import { parseCsvText, type CsvRow } from "@/lib/catalogueDataset/parseCsv"
-import { detectFacetColumns } from "@/lib/catalogueDataset/columns"
+import { parseCsvText } from "@/lib/catalogueDataset/parseCsv"
 import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransfer"
+import useProjectDataset from "@/hooks/useProjectDataset"
 import {
   formatMappingInfo,
   parseTileMapping,
@@ -234,14 +234,6 @@ type PdfExportEntry = {
   pages: Record<string, PdfExportPage> | PdfExportPage[]
 }
 
-type DatasetCache = {
-  headers: string[]
-  rowsRef: React.MutableRefObject<CsvRow[]>
-  rowCount: number
-  columnMeta: ReturnType<typeof detectFacetColumns>
-  version: number
-}
-
 async function deleteImagesForProject(projectId: string) {
   await clearImagesForProject(projectId)
 }
@@ -306,8 +298,6 @@ export default function CatalogueBuilderPage() {
   const [draftUserHasChosenMode, setDraftUserHasChosenMode] = useState(false)
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
   const [pendingCapturedUrl, setPendingCapturedUrl] = useState<string | null>(null)
-  const [datasetMeta, setDatasetMeta] = useState<DatasetCache | null>(null)
-  const datasetRowsRef = useRef<CsvRow[]>([])
   const [datasetUploadOpen, setDatasetUploadOpen] = useState(false)
   const [datasetDetailsOpen, setDatasetDetailsOpen] = useState(false)
   const [datasetClearOpen, setDatasetClearOpen] = useState(false)
@@ -335,6 +325,11 @@ export default function CatalogueBuilderPage() {
     )
   }, [projectsState])
 
+  const { datasetMeta, datasetRowsRef, facetColumnList } = useProjectDataset(
+    project?.id ?? null,
+    project?.dataset?.id ?? null
+  )
+
   const datasetBrandOptions = useMemo(() => {
     if (!datasetMeta) return BRAND_OPTIONS
     const values = new Set<string>()
@@ -345,12 +340,6 @@ export default function CatalogueBuilderPage() {
     if (values.size === 0) return BRAND_OPTIONS
     return Array.from(values).map((value) => ({ label: value, value }))
   }, [datasetMeta?.version])
-
-  const facetColumnList = useMemo(() => {
-    const columns = datasetMeta?.columnMeta?.facetColumns
-    if (!columns) return []
-    return Object.values(columns).flat()
-  }, [datasetMeta?.columnMeta])
 
   function persistProjectsState(
     updater: (prev: typeof projectsState) => typeof projectsState
@@ -389,41 +378,6 @@ export default function CatalogueBuilderPage() {
     }
   }, [project?.id, project?.pdfAssetIds])
 
-  useEffect(() => {
-    let cancelled = false
-
-    async function hydrateDataset() {
-      if (!project || !project.dataset) {
-        datasetRowsRef.current = []
-        setDatasetMeta(null)
-        return
-      }
-
-      const datasetKey = getDatasetKey(project.id, project.dataset.id)
-      const record = await getProjectDataset(datasetKey)
-      if (cancelled) return
-      if (!record?.csvText) {
-        datasetRowsRef.current = []
-        setDatasetMeta(null)
-        return
-      }
-
-      const parsed = parseCsvText(record.csvText)
-      datasetRowsRef.current = parsed.rows
-      setDatasetMeta({
-        headers: parsed.headers,
-        rowsRef: datasetRowsRef,
-        rowCount: parsed.rows.length,
-        columnMeta: detectFacetColumns(parsed.headers),
-        version: Date.now(),
-      })
-    }
-
-    void hydrateDataset()
-    return () => {
-      cancelled = true
-    }
-  }, [project?.id, project?.dataset?.id])
 
   const projectBar = (
     <div className="flex flex-wrap items-center gap-2">
@@ -1030,13 +984,6 @@ export default function CatalogueBuilderPage() {
     await putProjectDataset(datasetKey, project.id, file.name, text)
 
     datasetRowsRef.current = parsed.rows
-    setDatasetMeta({
-      headers: parsed.headers,
-      rowsRef: datasetRowsRef,
-      rowCount: parsed.rows.length,
-      columnMeta: detectFacetColumns(parsed.headers),
-      version: Date.now(),
-    })
 
     const updated: CatalogueProject = {
       ...project,
@@ -1058,7 +1005,6 @@ export default function CatalogueBuilderPage() {
     const datasetKey = getDatasetKey(project.id, project.dataset.id)
     await deleteProjectDataset(datasetKey)
     datasetRowsRef.current = []
-    setDatasetMeta(null)
     const updated: CatalogueProject = {
       ...project,
       dataset: null,

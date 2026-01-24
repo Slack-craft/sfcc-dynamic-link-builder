@@ -631,6 +631,7 @@ export default function CatalogueBuilderPage() {
     previewUrl,
     onPreviewUrlChange,
     facetQuery,
+    activeOutput,
   } = useTileBuilder({
     selectedTile,
     linkState: draftLinkState,
@@ -639,22 +640,6 @@ export default function CatalogueBuilderPage() {
     setLiveCapturedUrl: setDraftLiveCapturedUrl,
   })
 
-  function computeOutputForMode(
-    state: LinkBuilderState,
-    mode: "plu" | "facet" | "live",
-    query: string
-  ) {
-    if (mode === "live") return "Live mode does not convert yet."
-    if (mode === "facet") {
-      return buildDynamicOutputFromState({ ...state, plus: [] }, query)
-    }
-    return buildDynamicOutputFromState(state, "")
-  }
-
-  const activeOutput = useMemo(
-    () => computeOutputForMode(draftLinkState, draftActiveLinkMode, facetQuery),
-    [draftActiveLinkMode, draftLinkState, facetQuery]
-  )
 
   function setProjectStage(nextStage: ProjectStage) {
     if (!project) return
@@ -2255,7 +2240,7 @@ export default function CatalogueBuilderPage() {
                                       setDraftLinkState(nextState)
                                       setDraftExtractedFlags(createEmptyExtractedFlags())
                                       setDraftLinkOutput(
-                                        computeOutputForMode(nextState, draftActiveLinkMode, facetQuery)
+                                        buildDynamicOutputFromState(nextState, "")
                                       )
                                     }}
                                   >
@@ -2288,7 +2273,12 @@ export default function CatalogueBuilderPage() {
                           if (didConvert) {
                             setDraftLinkState(nextState)
                             setDraftLinkOutput(
-                              computeOutputForMode(nextState, draftActiveLinkMode, facetQuery)
+                              buildDynamicOutputFromState(
+                                draftActiveLinkMode === "facet"
+                                  ? { ...nextState, plus: [] }
+                                  : nextState,
+                                draftActiveLinkMode === "facet" ? facetQuery : ""
+                              )
                             )
                             setDraftLinkSource("manual")
                             const nextPluCount = nextState.plus.filter((plu) => plu.trim().length > 0).length

@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import type { Region, Tile } from "@/tools/catalogue-builder/catalogueTypes"
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 import { buildFacetQueryFromSelections } from "@/lib/catalogue/facets"
-import { buildPreviewUrlFromState, createEmptyLinkBuilderState } from "@/lib/catalogue/link"
+import {
+  buildDynamicOutputFromState,
+  buildPreviewUrlFromState,
+  createEmptyLinkBuilderState,
+} from "@/lib/catalogue/link"
 
 type UseTileBuilderParams = {
   selectedTile: Tile | null
@@ -103,6 +107,23 @@ export default function useTileBuilder({
     return candidatePluUrl
   }, [candidateFacetUrl, candidateLiveUrl, candidatePluUrl, draftActiveLinkMode])
 
+  function computeOutputForMode(
+    state: LinkBuilderState,
+    mode: "plu" | "facet" | "live",
+    query: string
+  ) {
+    if (mode === "live") return "Live mode does not convert yet."
+    if (mode === "facet") {
+      return buildDynamicOutputFromState({ ...state, plus: [] }, query)
+    }
+    return buildDynamicOutputFromState(state, "")
+  }
+
+  const activeOutput = useMemo(
+    () => computeOutputForMode(linkState, draftActiveLinkMode, facetQuery),
+    [draftActiveLinkMode, linkState, facetQuery]
+  )
+
   const onPreviewUrlChange = useCallback(
     (value: string) => {
       setLiveCapturedUrl(value)
@@ -127,5 +148,6 @@ export default function useTileBuilder({
     previewUrl,
     onPreviewUrlChange,
     facetQuery,
+    activeOutput,
   }
 }

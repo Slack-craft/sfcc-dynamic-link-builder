@@ -177,6 +177,7 @@ export default function CatalogueBuilderPage() {
   } | null>(null)
   const [awaitingManualLink, setAwaitingManualLink] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isDirty, setIsDirty] = useState(false)
   const linkBuilderRef = useRef<DynamicLinkBuilderHandle | null>(null)
   const activeLinkModeRef = useRef<"plu" | "facet" | "live">("plu")
   const userHasChosenModeRef = useRef(false)
@@ -192,6 +193,7 @@ export default function CatalogueBuilderPage() {
   const isUploadingImagesRef = useRef(false)
   const lastUploadSignatureRef = useRef<string | null>(null)
   const beforeSelectRef = useRef<(() => void) | null>(null)
+  const suppressDirtyRef = useRef(false)
 
   const project = useMemo(() => {
     return (
@@ -360,15 +362,12 @@ export default function CatalogueBuilderPage() {
         {projectsState.projects.length === 0 ? (
           <option value="">No projects</option>
         ) : null}
-        {projectsState.projects.map((item: CatalogueProject) => (
+      {projectsState.projects.map((item: CatalogueProject) => (
           <option key={item.id} value={item.id}>
             {item.name}
           </option>
         ))}
       </select>
-      <Badge variant={isSaving ? "secondary" : isDirty ? "destructive" : "secondary"}>
-        {isSaving ? "Saving..." : isDirty ? "Unsaved changes" : "Saved"}
-      </Badge>
       <Button type="button" size="sm" onClick={() => setNewProjectOpen(true)}>
         New Project
       </Button>
@@ -606,41 +605,21 @@ export default function CatalogueBuilderPage() {
     setLiveCapturedUrl: setDraftLiveCapturedUrl,
   })
 
-  const isDirty = useMemo(() => {
-    if (!selectedTile) return false
-    const normalize = (value?: string) => (value ?? "").trim()
-    const storedLinkState = selectedTile.linkBuilderState ?? createEmptyLinkBuilderState()
-    const storedExtractedFlags =
-      selectedTile.extractedPluFlags ?? createEmptyExtractedFlags()
-    const storedFacetBrands = selectedTile.facetBuilder?.selectedBrands ?? []
-    const storedFacetArticleTypes = selectedTile.facetBuilder?.selectedArticleTypes ?? []
-    const storedExcludedPluIds = selectedTile.facetBuilder?.excludedPluIds ?? []
-    const sameArray = (a: readonly unknown[], b: readonly unknown[]) =>
-      a.length === b.length && a.every((value, index) => value === b[index])
-    const linkStateSame =
-      JSON.stringify(draftLinkState) === JSON.stringify(storedLinkState)
-    const extractedSame =
-      JSON.stringify(draftExtractedFlags) === JSON.stringify(storedExtractedFlags)
-    return (
-      normalize(draftTitle) !== normalize(selectedTile.title) ||
-      draftTitleEditedManually !== (selectedTile.titleEditedManually ?? false) ||
-      draftStatus !== selectedTile.status ||
-      normalize(draftNotes) !== normalize(selectedTile.notes) ||
-      normalize(draftLinkOutput) !== normalize(selectedTile.dynamicLink ?? "") ||
-      !linkStateSame ||
-      !extractedSame ||
-      normalize(draftLiveCapturedUrl) !== normalize(selectedTile.liveCapturedUrl ?? "") ||
-      draftLinkSource !== (selectedTile.linkSource ?? "manual") ||
-      draftActiveLinkMode !== (selectedTile.activeLinkMode ?? "plu") ||
-      draftUserHasChosenMode !== (selectedTile.userHasChosenMode ?? false) ||
-      !sameArray(builderFacetBrands, storedFacetBrands) ||
-      !sameArray(builderFacetArticleTypes, storedFacetArticleTypes) ||
-      !sameArray(draftFacetExcludedPluIds, storedExcludedPluIds) ||
-      draftFacetExcludePercentEnabled !==
-        (selectedTile.facetBuilder?.excludePercentMismatchesEnabled ?? false)
-    )
+  useEffect(() => {
+    if (!selectedTile) {
+      setIsDirty(false)
+      return
+    }
+    if (suppressDirtyRef.current) {
+      suppressDirtyRef.current = false
+      return
+    }
+    if (!isDirty) {
+      setIsDirty(true)
+    }
   }, [
     selectedTile,
+    isDirty,
     draftTitle,
     draftTitleEditedManually,
     draftStatus,
@@ -657,6 +636,11 @@ export default function CatalogueBuilderPage() {
     draftFacetExcludedPluIds,
     draftFacetExcludePercentEnabled,
   ])
+
+  useEffect(() => {
+    suppressDirtyRef.current = true
+    setIsDirty(false)
+  }, [selectedTile?.id])
 
   useEffect(() => {
     activeLinkModeRef.current = draftActiveLinkMode
@@ -1057,6 +1041,8 @@ export default function CatalogueBuilderPage() {
       await Promise.resolve(commitAndSaveSelectedTile())
     } finally {
       setIsSaving(false)
+      suppressDirtyRef.current = true
+      setIsDirty(false)
     }
   }, [commitAndSaveSelectedTile, isSaving])
 

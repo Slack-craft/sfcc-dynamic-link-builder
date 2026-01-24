@@ -93,33 +93,77 @@ export async function createTilesFromFiles(params: {
           existingTilesByKey.set(stripExtension(tile.originalFileName).toLowerCase(), tile)
         }
       })
+      const existingIds = new Set(project.tiles.map((tile) => tile.id.toLowerCase()))
 
       let replacedCount = 0
+      const tilesToAdd: Tile[] = []
+      const newImageIds: string[] = []
       const replacedItems: Array<{ fileName: string; tileId: string; imageKey: string }> = []
       for (const file of files) {
         const fileKey = stripExtension(file.name).toLowerCase()
         const matchedTile = existingTilesByKey.get(fileKey)
-        if (!matchedTile || !matchedTile.imageKey) continue
-        await putAssetRecord({
-          assetId: matchedTile.imageKey,
-          projectId: project.id,
-          type: "image",
-          name: file.name,
-          blob: file,
-          createdAt: Date.now(),
-        })
-        replacedCount += 1
-        replacedItems.push({
-          fileName: file.name,
-          tileId: matchedTile.id,
-          imageKey: matchedTile.imageKey,
+        if (matchedTile && matchedTile.imageKey) {
+          await putAssetRecord({
+            assetId: matchedTile.imageKey,
+            projectId: project.id,
+            type: "image",
+            name: file.name,
+            blob: file,
+            createdAt: Date.now(),
+          })
+          replacedCount += 1
+          replacedItems.push({
+            fileName: file.name,
+            tileId: matchedTile.id,
+            imageKey: matchedTile.imageKey,
+          })
+          continue
+        }
+
+        const baseName = stripExtension(file.name)
+        const rawId = sanitizeTileId(baseName)
+        let uniqueId = rawId
+        let suffix = 2
+        while (existingIds.has(uniqueId.toLowerCase())) {
+          uniqueId = `${rawId}-${suffix}`
+          suffix += 1
+        }
+        existingIds.add(uniqueId.toLowerCase())
+
+        const colorKey = await putImage(project.id, file.name, file)
+        newImageIds.push(colorKey)
+        tilesToAdd.push({
+          id: uniqueId,
+          tileNumber: uniqueId,
+          status: "todo",
+          notes: undefined,
+          dynamicLink: undefined,
+          activeLinkMode: "plu",
+          userHasChosenMode: false,
+          linkBuilderState: createEmptyLinkBuilderState(),
+          extractedPluFlags: createEmptyExtractedFlags(),
+          facetBuilder: {
+            selectedBrands: [],
+            selectedArticleTypes: [],
+            excludedPluIds: [],
+            excludePercentMismatchesEnabled: false,
+          },
+          linkSource: "manual",
+          liveCapturedUrl: undefined,
+          imageKey: colorKey,
+          originalFileName: file.name,
         })
       }
 
-      if (replacedCount > 0) {
+      if (replacedCount > 0 || tilesToAdd.length > 0) {
         clearObjectUrlCache()
+        const nextImageAssetIds = Array.from(
+          new Set([...(project.imageAssetIds ?? []), ...newImageIds])
+        )
         upsertProject({
           ...project,
+          tiles: tilesToAdd.length > 0 ? [...project.tiles, ...tilesToAdd] : project.tiles,
+          imageAssetIds: nextImageAssetIds,
           updatedAt: new Date().toISOString(),
         })
       }
@@ -127,12 +171,13 @@ export async function createTilesFromFiles(params: {
         console.log("[setup] replace images", {
           files: files.length,
           replaced: replacedCount,
+          created: tilesToAdd.length,
         })
       }
       return {
         replaced: replacedCount,
-        created: 0,
-        skipped: Math.max(0, files.length - replacedCount),
+        created: tilesToAdd.length,
+        skipped: Math.max(0, files.length - replacedCount - tilesToAdd.length),
         replacedItems,
       }
     }

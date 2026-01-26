@@ -350,3 +350,5 @@ When you’re ready, I’ll generate the Codex prompts for **1.1** in a tight, l
 * preserve rect mappings + state
 * add “new images create new tiles”
 * per-tile replace
+
+1st Live Catalogue Test Notes -

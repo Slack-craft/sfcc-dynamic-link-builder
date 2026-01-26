@@ -42,6 +42,21 @@ export type Tile = {
   image?: TileImageRef
 }
 
+export type TileSummary = {
+  id: string
+  originalFileName?: string
+  imageKey?: string
+  status: TileStatus
+  title?: string
+  pdfMappingStatus?: "missing"
+  pdfMappingReason?: string
+  mappedPdfFilename?: string
+  mappedSpreadNumber?: number
+  mappedHalf?: "left" | "right"
+  mappedBoxIndex?: number
+  updatedAt?: number
+}
+
 export type Region = "AU" | "NZ"
 
 export type ProjectStage = "setup" | "pdf-detect" | "catalogue"
@@ -69,6 +84,7 @@ export type CatalogueProject = {
   createdAt: string
   updatedAt: string
   hasRunMassExtractFromPdf?: boolean
+  tileStoreVersion?: number
   imageAssetIds: string[]
   pdfAssetIds: string[]
   dataset?: ProjectDatasetMeta | null

@@ -50,10 +50,13 @@ import {
   getProjectDataset,
   getAsset,
   deleteProjectDataset,
+  putTileDetail,
+  getTileDetail,
 } from "@/lib/assetStore"
 import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
 import { type PdfRect } from "@/tools/catalogue-builder/pdfTextExtract"
 import { clearObjectUrlCache, getObjectUrl, revokeObjectUrl } from "@/lib/images/objectUrlCache"
+import { toTileSummary } from "@/lib/catalogue/tileSummary"
 import { linkViaPreview, openPreview } from "@/lib/preview/previewService"
 import { parseCsvText } from "@/lib/catalogueDataset/parseCsv"
 import { exportProjectToZip, importProjectFromZip } from "@/lib/devProjectTransfer"
@@ -92,6 +95,8 @@ import type {
   CatalogueProject,
   ProjectStage,
   Region,
+  Tile,
+  TileSummary,
 } from "@/tools/catalogue-builder/catalogueTypes"
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 
@@ -204,13 +209,107 @@ export default function CatalogueBuilderPage() {
     )
   }, [projectsState])
 
+  useEffect(() => {
+    if (!project) return
+    if ((project.tileStoreVersion ?? 0) >= 2) return
+    const currentProject = project
+    let cancelled = false
+    async function migrateTiles() {
+      try {
+        for (const tile of currentProject.tiles) {
+          await putTileDetail(currentProject.id, tile.id, tile)
+        }
+        if (cancelled) return
+        const updated: CatalogueProject = {
+          ...currentProject,
+          tiles: currentProject.tiles.map((tile) => toTileSummary(tile)),
+          tileStoreVersion: 2,
+          updatedAt: new Date().toISOString(),
+        }
+        upsertProject(updated)
+      } catch (error) {
+        if (isDev) {
+          console.warn("[storage] tile migration failed, leaving localStorage intact", error)
+        }
+      }
+    }
+    void migrateTiles()
+    return () => {
+      cancelled = true
+    }
+  }, [project?.id, project?.tileStoreVersion])
+
   const {
     selectedTileId,
     setSelectedTileId,
-    selectedTile,
+    selectedTile: selectedTileSummary,
     selectTile,
     selectTileByOffset,
   } = useTileSelection(project, beforeSelectRef)
+  const [selectedTileDetail, setSelectedTileDetail] = useState<Tile | null>(null)
+
+  function createTileDetailFromSummary(summary: TileSummary | Tile): Tile {
+    return {
+      id: summary.id,
+      status: summary.status,
+      title: summary.title,
+      originalFileName: summary.originalFileName,
+      imageKey: summary.imageKey,
+      pdfMappingStatus: summary.pdfMappingStatus,
+      pdfMappingReason: summary.pdfMappingReason,
+      mappedPdfFilename: summary.mappedPdfFilename,
+      mappedSpreadNumber: summary.mappedSpreadNumber,
+      mappedHalf: summary.mappedHalf,
+      mappedBoxIndex: summary.mappedBoxIndex,
+      linkBuilderState: createEmptyLinkBuilderState(),
+      extractedPluFlags: createEmptyExtractedFlags(),
+      facetBuilder: {
+        selectedBrands: [],
+        selectedArticleTypes: [],
+        excludedPluIds: [],
+        excludePercentMismatchesEnabled: false,
+      },
+      linkSource: "manual",
+    }
+  }
+
+  useEffect(() => {
+    if (!project || !selectedTileId) {
+      setSelectedTileDetail(null)
+      return
+    }
+    const summary = selectedTileSummary
+    if (!summary) {
+      setSelectedTileDetail(null)
+      return
+    }
+    const currentProject = project
+    const currentSummary = summary
+    let cancelled = false
+    async function loadDetail() {
+      try {
+        const record = await getTileDetail(currentProject.id, currentSummary.id)
+        if (cancelled) return
+        if (record?.detail) {
+          setSelectedTileDetail(record.detail as Tile)
+          return
+        }
+        const created = createTileDetailFromSummary(currentSummary)
+        await putTileDetail(currentProject.id, currentSummary.id, created)
+        if (cancelled) return
+        setSelectedTileDetail(created)
+      } catch {
+        if (cancelled) return
+        setSelectedTileDetail(createTileDetailFromSummary(currentSummary))
+      }
+    }
+    void loadDetail()
+    return () => {
+      cancelled = true
+    }
+  }, [project?.id, selectedTileId, selectedTileSummary])
+
+  const selectedTile = selectedTileDetail
 
   const { datasetMeta, datasetRowsRef, facetColumnList } = useProjectDataset(
     project?.id ?? null,
@@ -264,6 +363,7 @@ export default function CatalogueBuilderPage() {
     selectedTile,
     updateTile,
     onUpsertProject: upsertProject,
+    putTileDetail,
     commitBuilderState: () => linkBuilderRef.current?.commitNow(),
     beforeSelectRef,
     getActiveLinkMode: () => activeLinkModeRef.current,
@@ -671,6 +771,7 @@ export default function CatalogueBuilderPage() {
     pdfAssetNames,
     updateTile,
     upsertProject,
+    putTileDetail,
     deleteImagesForProject,
     setSelectedTileId,
     replaceInputRef,

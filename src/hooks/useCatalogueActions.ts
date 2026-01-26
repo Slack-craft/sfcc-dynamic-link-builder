@@ -16,6 +16,7 @@ import {
 } from "@/lib/catalogue/link"
 import { findRectById, getExportSpreadOrder, getFirstPageExport } from "@/lib/catalogue/pdf"
 import { parseTileMapping, slugifyLabel } from "@/lib/catalogue/format"
+import { toTileSummary } from "@/lib/catalogue/tileSummary"
 
 type ToastApi = {
   error: (message: string) => void
@@ -66,6 +67,7 @@ type UseCatalogueActionsParams = {
   pdfAssetNames: Record<string, string>
   updateTile: (project: CatalogueProject, tileId: string, overrides: Partial<Tile>) => CatalogueProject
   upsertProject: (updated: CatalogueProject) => void
+  putTileDetail: (projectId: string, tileId: string, detail: Tile) => Promise<void>
   deleteImagesForProject: (projectId: string) => Promise<void>
   setSelectedTileId: (tileId: string | null) => void
   replaceInputRef: RefObject<HTMLInputElement | null>
@@ -93,6 +95,7 @@ export default function useCatalogueActions({
   pdfAssetNames,
   updateTile,
   upsertProject,
+  putTileDetail,
   deleteImagesForProject,
   setSelectedTileId,
   replaceInputRef,
@@ -591,10 +594,13 @@ export default function useCatalogueActions({
 
       const updated: CatalogueProject = {
         ...project,
-        tiles: resolvedTiles,
+        tiles: resolvedTiles.map((tile) => toTileSummary(tile)),
         updatedAt: new Date().toISOString(),
         hasRunMassExtractFromPdf: true,
       }
+      await Promise.all(
+        resolvedTiles.map((tile) => putTileDetail(project.id, tile.id, tile))
+      )
       upsertProject(updated)
       const updatedCount = processedTiles
       const skippedCount = missingMappings

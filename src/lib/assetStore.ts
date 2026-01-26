@@ -17,10 +17,20 @@ export type DatasetRecord = {
   createdAt: number
 }
 
+export type TileDetailRecord = {
+  detailKey: string
+  projectId: string
+  tileId: string
+  version: number
+  detail: unknown
+  updatedAt: number
+}
+
 const DB_NAME = "sca_catalogue_asset_store"
 const STORE_NAME = "assets"
 const DATASET_STORE = "datasets"
-const DB_VERSION = 2
+const TILE_DETAIL_STORE = "tile_details"
+const DB_VERSION = 3
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
@@ -37,10 +47,17 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(DATASET_STORE)) {
         db.createObjectStore(DATASET_STORE, { keyPath: "datasetKey" })
       }
+      if (!db.objectStoreNames.contains(TILE_DETAIL_STORE)) {
+        db.createObjectStore(TILE_DETAIL_STORE, { keyPath: "detailKey" })
+      }
     }
     request.onsuccess = () => resolve(request.result)
   })
   return dbPromise
+}
+
+function getTileDetailKey(projectId: string, tileId: string) {
+  return `${projectId}:${tileId}`
 }
 
 export async function putAsset(
@@ -171,5 +188,76 @@ export async function deleteProjectDataset(datasetKey: string): Promise<void> {
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error ?? new Error("Failed to delete dataset"))
     tx.objectStore(DATASET_STORE).delete(datasetKey)
+  })
+}
+
+export async function putTileDetail(
+  projectId: string,
+  tileId: string,
+  detail: unknown,
+  version = 1
+): Promise<void> {
+  const record: TileDetailRecord = {
+    detailKey: getTileDetailKey(projectId, tileId),
+    projectId,
+    tileId,
+    version,
+    detail,
+    updatedAt: Date.now(),
+  }
+  const db = await openDb()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(TILE_DETAIL_STORE, "readwrite")
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to store tile detail"))
+    tx.objectStore(TILE_DETAIL_STORE).put(record)
+  })
+}
+
+export async function getTileDetail(
+  projectId: string,
+  tileId: string
+): Promise<TileDetailRecord | undefined> {
+  const db = await openDb()
+  const detailKey = getTileDetailKey(projectId, tileId)
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(TILE_DETAIL_STORE, "readonly")
+    const request = tx.objectStore(TILE_DETAIL_STORE).get(detailKey)
+    request.onsuccess = () =>
+      resolve(request.result as TileDetailRecord | undefined)
+    request.onerror = () =>
+      reject(request.error ?? new Error("Failed to read tile detail"))
+  })
+}
+
+export async function deleteTileDetail(
+  projectId: string,
+  tileId: string
+): Promise<void> {
+  const db = await openDb()
+  const detailKey = getTileDetailKey(projectId, tileId)
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(TILE_DETAIL_STORE, "readwrite")
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to delete tile detail"))
+    tx.objectStore(TILE_DETAIL_STORE).delete(detailKey)
+  })
+}
+
+export async function listTileDetailsByProject(
+  projectId: string
+): Promise<TileDetailRecord[]> {
+  const db = await openDb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(TILE_DETAIL_STORE, "readonly")
+    const request = tx.objectStore(TILE_DETAIL_STORE).getAll()
+    request.onsuccess = () => {
+      const results = (request.result as TileDetailRecord[]).filter(
+        (record) => record.projectId === projectId
+      )
+      resolve(results)
+    }
+    request.onerror = () =>
+      reject(request.error ?? new Error("Failed to list tile details"))
   })
 }

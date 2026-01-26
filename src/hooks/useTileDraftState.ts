@@ -3,6 +3,7 @@ import type { CatalogueProject, Tile, TileStatus } from "@/tools/catalogue-build
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 import { createEmptyExtractedFlags } from "@/lib/catalogue/plu"
 import { createEmptyLinkBuilderState } from "@/lib/catalogue/link"
+import { toTileSummary } from "@/lib/catalogue/tileSummary"
 
 type CommitResult = { state: LinkBuilderState; output: string } | undefined
 
@@ -15,6 +16,7 @@ type UseTileDraftStateParams = {
     overrides: Partial<Tile>
   ) => CatalogueProject
   onUpsertProject: (updated: CatalogueProject) => void
+  putTileDetail: (projectId: string, tileId: string, detail: Tile) => Promise<void>
   commitBuilderState: () => CommitResult
   beforeSelectRef?: MutableRefObject<(() => void) | null>
   getActiveLinkMode?: () => Tile["activeLinkMode"]
@@ -28,6 +30,7 @@ export default function useTileDraftState({
   selectedTile,
   updateTile,
   onUpsertProject,
+  putTileDetail,
   commitBuilderState,
   beforeSelectRef,
   getActiveLinkMode,
@@ -108,7 +111,8 @@ export default function useTileDraftState({
       false
     const selectedBrands = getFacetBrands?.() ?? draftFacetBrands
     const selectedArticleTypes = getFacetArticleTypes?.() ?? draftFacetArticleTypes
-    const updated = updateTile(project, selectedTile.id, {
+    const detail: Tile = {
+      ...selectedTile,
       title: draftTitle.trim() || undefined,
       titleEditedManually: draftTitleEditedManually,
       status: draftStatus,
@@ -126,8 +130,16 @@ export default function useTileDraftState({
         excludedPluIds: draftFacetExcludedPluIds,
         excludePercentMismatchesEnabled: draftFacetExcludePercentEnabled,
       },
-    })
-    onUpsertProject(updated)
+    }
+    void putTileDetail(project.id, selectedTile.id, detail)
+    const updatedProject: CatalogueProject = {
+      ...project,
+      tiles: project.tiles.map((tile) =>
+        tile.id === selectedTile.id ? toTileSummary(detail) : tile
+      ),
+      updatedAt: new Date().toISOString(),
+    }
+    onUpsertProject(updatedProject)
   }
 
   const commitAndSaveSelectedTile = useCallback(() => {

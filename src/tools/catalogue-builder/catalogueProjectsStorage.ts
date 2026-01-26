@@ -7,6 +7,79 @@ export type CatalogueProjectsState = {
 }
 
 const STORAGE_KEY = "sca_catalogue_projects_v1"
+const DATASET_META_KEYS = new Set(["id", "filename", "rowCount", "headers", "loadedAt"])
+const DEV_WARN_STRING_LIMIT = 20000
+const DEV_WARN_ARRAY_LIMIT = 2000
+let didWarnLargeDatasetMeta = false
+
+function sanitizeDatasetMeta(dataset: CatalogueProject["dataset"]) {
+  if (!dataset || typeof dataset !== "object") return null
+  const meta = dataset as Record<string, unknown>
+  const sanitized = {
+    id: typeof meta.id === "string" ? meta.id : "",
+    filename: typeof meta.filename === "string" ? meta.filename : "dataset.csv",
+    rowCount: typeof meta.rowCount === "number" ? meta.rowCount : 0,
+    headers: Array.isArray(meta.headers) ? meta.headers : [],
+    loadedAt: typeof meta.loadedAt === "string" ? meta.loadedAt : new Date().toISOString(),
+  }
+  return sanitized
+}
+
+function maybeWarnLargeDatasetMeta(dataset: CatalogueProject["dataset"]) {
+  if (!import.meta.env.DEV || didWarnLargeDatasetMeta) return
+  if (!dataset || typeof dataset !== "object") return
+  const meta = dataset as Record<string, unknown>
+  for (const [key, value] of Object.entries(meta)) {
+    if (DATASET_META_KEYS.has(key)) continue
+    if (typeof value === "string" && value.length > DEV_WARN_STRING_LIMIT) {
+      console.warn("[storage] dataset meta contains large string field:", key)
+      didWarnLargeDatasetMeta = true
+      return
+    }
+    if (Array.isArray(value) && value.length > DEV_WARN_ARRAY_LIMIT) {
+      console.warn("[storage] dataset meta contains large array field:", key)
+      didWarnLargeDatasetMeta = true
+      return
+    }
+  }
+}
+
+function sanitizeProjectsState(state: CatalogueProjectsState) {
+  let changed = false
+  const projects = state.projects.map((project) => {
+    const sanitizedDataset = sanitizeDatasetMeta(project.dataset ?? null)
+    if (sanitizedDataset !== project.dataset) {
+      changed = true
+      maybeWarnLargeDatasetMeta(project.dataset ?? null)
+    }
+    const sanitizedTiles = project.tiles.map((tile) => ({
+      id: tile.id,
+      originalFileName: tile.originalFileName,
+      imageKey: tile.imageKey,
+      status: tile.status,
+      title: tile.title,
+      pdfMappingStatus: tile.pdfMappingStatus,
+      pdfMappingReason: tile.pdfMappingReason,
+      mappedPdfFilename: tile.mappedPdfFilename,
+      mappedSpreadNumber: tile.mappedSpreadNumber,
+      mappedHalf: tile.mappedHalf,
+      mappedBoxIndex: tile.mappedBoxIndex,
+      updatedAt: tile.offerUpdatedAt,
+    }))
+    if (sanitizedTiles.length !== project.tiles.length) {
+      changed = true
+    }
+    return {
+      ...project,
+      dataset: sanitizedDataset,
+      tiles: sanitizedTiles as typeof project.tiles,
+    }
+  })
+  return {
+    state: { ...state, projects },
+    changed,
+  }
+}
 
 function normalizeProject(value: unknown): CatalogueProject | null {
   if (!value || typeof value !== "object") return null
@@ -46,10 +119,9 @@ function normalizeProject(value: unknown): CatalogueProject | null {
     project.tileMatches && typeof project.tileMatches === "object"
       ? project.tileMatches
       : {}
-  const dataset =
-    project.dataset && typeof project.dataset === "object"
-      ? project.dataset
-      : null
+  const dataset = sanitizeDatasetMeta(
+    project.dataset && typeof project.dataset === "object" ? project.dataset : null
+  )
   const tiles = project.tiles.map((tile) => {
     if (!tile || typeof tile !== "object") return tile
     const linkState = tile.linkBuilderState
@@ -97,14 +169,39 @@ export function loadProjectsState(): CatalogueProjectsState {
       .filter((item): item is CatalogueProject => item !== null)
     const activeProjectId =
       typeof parsed.activeProjectId === "string" ? parsed.activeProjectId : null
-    return { activeProjectId, projects }
+    const { state: sanitized, changed } = sanitizeProjectsState({
+      activeProjectId,
+      projects,
+    })
+    if (changed) {
+      saveProjectsState(sanitized)
+    }
+    return sanitized
   } catch {
     return { activeProjectId: null, projects: [] }
   }
 }
 
 export function saveProjectsState(state: CatalogueProjectsState): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  // IndexedDB for heavy payloads; localStorage for metadata only.
+  const { state: sanitized } = sanitizeProjectsState(state)
+  try {
+    const payload = JSON.stringify(sanitized)
+    if (import.meta.env.DEV && payload.length > 1_000_000) {
+      console.warn("[storage] projectsState JSON exceeds 1MB:", payload.length)
+    }
+    localStorage.setItem(STORAGE_KEY, payload)
+  } catch (error) {
+    try {
+      const payload = JSON.stringify(sanitized)
+      if (import.meta.env.DEV && payload.length > 1_000_000) {
+        console.warn("[storage] projectsState JSON exceeds 1MB:", payload.length)
+      }
+      localStorage.setItem(STORAGE_KEY, payload)
+    } catch {
+      throw new Error("Local storage quota exceeded while saving projects.")
+    }
+  }
 }
 
 export function createProject(name: string, region: Region): CatalogueProject {

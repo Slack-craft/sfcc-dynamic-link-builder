@@ -49,7 +49,23 @@ export default function PdfTileDetectionPage({
   project: externalProject,
   onProjectChange,
 }: PdfTileDetectionPageProps) {
-  const [projectsState, setProjectsState] = useState(() => loadProjectsState())
+  const [projectsState, setProjectsState] = useState({
+    activeProjectId: null,
+    projects: [],
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadProjects() {
+      const state = await loadProjectsState()
+      if (cancelled) return
+      setProjectsState(state)
+    }
+    void loadProjects()
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const activeProject = useMemo(() => {
     return (
       projectsState.projects.find(

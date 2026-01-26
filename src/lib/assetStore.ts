@@ -1,3 +1,5 @@
+import type { CatalogueProject } from "@/tools/catalogue-builder/catalogueTypes"
+
 export type AssetType = "image" | "pdf"
 
 export type AssetRecord = {
@@ -30,7 +32,8 @@ const DB_NAME = "sca_catalogue_asset_store"
 const STORE_NAME = "assets"
 const DATASET_STORE = "datasets"
 const TILE_DETAIL_STORE = "tile_details"
-const DB_VERSION = 3
+const PROJECT_STORE = "catalogue_projects"
+const DB_VERSION = 4
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
@@ -49,6 +52,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(TILE_DETAIL_STORE)) {
         db.createObjectStore(TILE_DETAIL_STORE, { keyPath: "detailKey" })
+      }
+      if (!db.objectStoreNames.contains(PROJECT_STORE)) {
+        db.createObjectStore(PROJECT_STORE, { keyPath: "projectId" })
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -259,5 +265,60 @@ export async function listTileDetailsByProject(
     }
     request.onerror = () =>
       reject(request.error ?? new Error("Failed to list tile details"))
+  })
+}
+
+export async function putProject(project: CatalogueProject): Promise<void> {
+  const db = await openDb()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(PROJECT_STORE, "readwrite")
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to store project"))
+    tx.objectStore(PROJECT_STORE).put({
+      projectId: project.id,
+      project,
+    })
+  })
+}
+
+export async function getProject(
+  projectId: string
+): Promise<CatalogueProject | null> {
+  const db = await openDb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PROJECT_STORE, "readonly")
+    const request = tx.objectStore(PROJECT_STORE).get(projectId)
+    request.onsuccess = () => {
+      const record = request.result as { project?: CatalogueProject } | undefined
+      resolve(record?.project ?? null)
+    }
+    request.onerror = () =>
+      reject(request.error ?? new Error("Failed to read project"))
+  })
+}
+
+export async function listProjects(): Promise<CatalogueProject[]> {
+  const db = await openDb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PROJECT_STORE, "readonly")
+    const request = tx.objectStore(PROJECT_STORE).getAll()
+    request.onsuccess = () => {
+      const records = request.result as Array<{ project: CatalogueProject }>
+      const projects = records.map((record) => record.project)
+      projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      resolve(projects)
+    }
+    request.onerror = () =>
+      reject(request.error ?? new Error("Failed to list projects"))
+  })
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  const db = await openDb()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(PROJECT_STORE, "readwrite")
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to delete project"))
+    tx.objectStore(PROJECT_STORE).delete(projectId)
   })
 }

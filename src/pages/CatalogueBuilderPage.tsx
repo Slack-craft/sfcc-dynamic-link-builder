@@ -98,6 +98,7 @@ import type {
   Tile,
   TileSummary,
 } from "@/tools/catalogue-builder/catalogueTypes"
+import type { CatalogueProjectsState } from "@/tools/catalogue-builder/catalogueProjectsStorage"
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 
 const MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -154,7 +155,10 @@ export default function CatalogueBuilderPage() {
   if (isDev && renderCountRef.current % 10 === 0) {
     console.log("[CB] renders", renderCountRef.current)
   }
-  const [projectsState, setProjectsState] = useState(() => loadProjectsState())
+  const [projectsState, setProjectsState] = useState<CatalogueProjectsState>({
+    activeProjectId: null,
+    projects: [],
+  })
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [newProjectName, setNewProjectName] = useState("")
   const [newProjectRegion, setNewProjectRegion] = useState<Region>("AU")
@@ -200,6 +204,19 @@ export default function CatalogueBuilderPage() {
   const lastUploadSignatureRef = useRef<string | null>(null)
   const beforeSelectRef = useRef<(() => void) | null>(null)
   const suppressDirtyRef = useRef(false)
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadProjects() {
+      const state = await loadProjectsState()
+      if (cancelled) return
+      setProjectsState(state)
+    }
+    void loadProjects()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const project = useMemo(() => {
     return (

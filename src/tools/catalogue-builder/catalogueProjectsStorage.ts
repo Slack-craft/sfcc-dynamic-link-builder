@@ -7,6 +7,7 @@ export type CatalogueProjectsState = {
 }
 
 const STORAGE_KEY = "sca_catalogue_projects_v1"
+const PROJECTS_MIGRATED_KEY = "sca_projects_migrated_v1"
 const DATASET_META_KEYS = new Set(["id", "filename", "rowCount", "headers", "loadedAt"])
 const DEV_WARN_STRING_LIMIT = 20000
 const DEV_WARN_ARRAY_LIMIT = 2000
@@ -156,7 +157,7 @@ function normalizeProject(value: unknown): CatalogueProject | null {
   }
 }
 
-export function loadProjectsState(): CatalogueProjectsState {
+async function loadProjectsStateFromLocalStorage(): Promise<CatalogueProjectsState> {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (!raw) return { activeProjectId: null, projects: [] }
   try {
@@ -176,30 +177,70 @@ export function loadProjectsState(): CatalogueProjectsState {
     if (changed) {
       saveProjectsState(sanitized)
     }
+    void migrateProjectsToIdbIfNeeded(sanitized)
     return sanitized
   } catch {
     return { activeProjectId: null, projects: [] }
   }
 }
 
+export async function loadProjectsState(): Promise<CatalogueProjectsState> {
+  try {
+    const { listProjects } = await import("@/lib/assetStore")
+    const idbProjects = await listProjects()
+    if (idbProjects.length > 0) {
+      const storedActive = localStorage.getItem("sca_active_project_id")
+      const activeProjectId =
+        idbProjects.find((project) => project.id === storedActive)?.id ??
+        idbProjects[0]?.id ??
+        null
+      return { activeProjectId, projects: idbProjects }
+    }
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn("[storage] failed to load projects from IndexedDB", error)
+    }
+  }
+  return loadProjectsStateFromLocalStorage()
+}
+
 export function saveProjectsState(state: CatalogueProjectsState): void {
   // IndexedDB for heavy payloads; localStorage for metadata only.
   const { state: sanitized } = sanitizeProjectsState(state)
-  try {
-    const payload = JSON.stringify(sanitized)
-    if (import.meta.env.DEV && payload.length > 1_000_000) {
-      console.warn("[storage] projectsState JSON exceeds 1MB:", payload.length)
-    }
-    localStorage.setItem(STORAGE_KEY, payload)
-  } catch (error) {
+  if (sanitized.activeProjectId) {
+    localStorage.setItem("sca_active_project_id", sanitized.activeProjectId)
+  } else {
+    localStorage.removeItem("sca_active_project_id")
+  }
+  if (localStorage.getItem(STORAGE_KEY)) {
+    localStorage.removeItem(STORAGE_KEY)
+  }
+  void (async () => {
     try {
-      const payload = JSON.stringify(sanitized)
-      if (import.meta.env.DEV && payload.length > 1_000_000) {
-        console.warn("[storage] projectsState JSON exceeds 1MB:", payload.length)
+      const { putProject } = await import("@/lib/assetStore")
+      for (const project of sanitized.projects) {
+        await putProject(project)
       }
-      localStorage.setItem(STORAGE_KEY, payload)
-    } catch {
-      throw new Error("Local storage quota exceeded while saving projects.")
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.warn("[storage] failed to persist projects to IndexedDB", error)
+      }
+    }
+  })()
+}
+
+async function migrateProjectsToIdbIfNeeded(state: CatalogueProjectsState): Promise<void> {
+  if (localStorage.getItem(PROJECTS_MIGRATED_KEY) === "true") return
+  if (!state.projects || state.projects.length === 0) return
+  try {
+    const { putProject } = await import("@/lib/assetStore")
+    for (const project of state.projects) {
+      await putProject(project)
+    }
+    localStorage.setItem(PROJECTS_MIGRATED_KEY, "true")
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn("[storage] project migration failed", error)
     }
   }
 }

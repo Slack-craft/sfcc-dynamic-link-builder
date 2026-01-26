@@ -52,6 +52,7 @@ import {
   deleteProjectDataset,
   putTileDetail,
   getTileDetail,
+  listTileDetailsByProject,
 } from "@/lib/assetStore"
 import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
 import { type PdfRect } from "@/tools/catalogue-builder/pdfTextExtract"
@@ -959,6 +960,7 @@ export default function CatalogueBuilderPage() {
       project,
       listAssets,
       getProjectDataset,
+      listTileDetailsByProject,
       exportProjectToZip,
       toast,
     })
@@ -971,6 +973,8 @@ export default function CatalogueBuilderPage() {
       importProjectFromZip,
       putProjectDataset,
       putAssetRecord,
+      putTileDetail,
+      toTileSummary,
       setProjectsState,
       setDatasetImportOpen,
       toast,

@@ -3,6 +3,7 @@ import type { CatalogueProject, Tile } from "@/tools/catalogue-builder/catalogue
 import type { LinkBuilderState } from "@/tools/link-builder/linkBuilderTypes"
 import type { AssetRecord, DatasetRecord } from "@/lib/assetStore"
 import type { ProjectExportManifest } from "@/lib/devProjectTransfer"
+import type { TileSummary } from "@/tools/catalogue-builder/catalogueTypes"
 
 type ToastApi = {
   warning: (message: string) => void
@@ -401,6 +402,7 @@ export async function handleExportProjectData(params: {
   project: CatalogueProject | null
   listAssets: (projectId: string) => Promise<AssetRecord[]>
   getProjectDataset: (datasetKey: string) => Promise<DatasetRecord | undefined>
+  listTileDetailsByProject: (projectId: string) => Promise<Array<{ tileId: string; detail: unknown }>>
   exportProjectToZip: (payload: {
     project: CatalogueProject
     assets: AssetRecord[]
@@ -408,15 +410,40 @@ export async function handleExportProjectData(params: {
   }) => Promise<Blob>
   toast: ToastApi
 }) {
-  const { project, listAssets, getProjectDataset, exportProjectToZip, toast } = params
+  const {
+    project,
+    listAssets,
+    getProjectDataset,
+    listTileDetailsByProject,
+    exportProjectToZip,
+    toast,
+  } = params
   if (!project) return
   try {
     const assets = await listAssets(project.id)
     const datasetRecord = project.dataset
       ? await getProjectDataset(getDatasetKey(project.id, project.dataset.id))
       : undefined
+    const detailRecords = await listTileDetailsByProject(project.id)
+    const detailById = new Map(
+      detailRecords.map((record) => [record.tileId, record.detail as Tile])
+    )
+    const fullTiles = project.tiles.map((summary) => {
+      const detail = detailById.get(summary.id)
+      return detail ?? (summary as unknown as Tile)
+    })
+    if (import.meta.env.DEV && fullTiles.length !== project.tiles.length) {
+      console.warn("[export] tile count mismatch", {
+        summaries: project.tiles.length,
+        details: fullTiles.length,
+      })
+    }
+    const exportProject: CatalogueProject = {
+      ...project,
+      tiles: fullTiles,
+    }
     const blob = await exportProjectToZip({
-      project,
+      project: exportProject,
       assets,
       dataset: datasetRecord,
     })
@@ -452,6 +479,8 @@ export async function handleImportProjectData(params: {
     csvText: string
   ) => Promise<void>
   putAssetRecord: (record: AssetRecord) => Promise<void>
+  putTileDetail: (projectId: string, tileId: string, detail: unknown) => Promise<void>
+  toTileSummary: (detail: Tile) => TileSummary
   setProjectsState: (updater: (prev: { projects: CatalogueProject[]; activeProjectId: string | null }) => {
     projects: CatalogueProject[]
     activeProjectId: string | null
@@ -465,6 +494,8 @@ export async function handleImportProjectData(params: {
     importProjectFromZip,
     putProjectDataset,
     putAssetRecord,
+    putTileDetail,
+    toTileSummary,
     setProjectsState,
     setDatasetImportOpen,
     toast,
@@ -503,10 +534,25 @@ export async function handleImportProjectData(params: {
       })
     }
 
+    const tiles = imported.tiles as Tile[]
+    for (const tile of tiles) {
+      await putTileDetail(newProjectId, tile.id, tile)
+    }
+    const summaries = tiles.map((tile) => toTileSummary(tile))
+    imported.tiles = summaries as unknown as Tile[]
+
     setProjectsState((prev) => ({
       activeProjectId: newProjectId,
       projects: [...prev.projects, imported],
     }))
+    if (import.meta.env.DEV) {
+      if (summaries.length !== tiles.length) {
+        console.warn("[import] tile count mismatch", {
+          summaries: summaries.length,
+          details: tiles.length,
+        })
+      }
+    }
     datasetImportRef.current.value = ""
     setDatasetImportOpen(false)
     toast.success(`Imported project: ${imported.name}`)

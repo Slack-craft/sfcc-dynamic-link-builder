@@ -351,4 +351,39 @@ When you’re ready, I’ll generate the Codex prompts for **1.1** in a tight, l
 * add “new images create new tiles”
 * per-tile replace
 
+Results:
+- PDF Detection Config - 14minutes (7 Mins per person/2)
+
+
+
 1st Live Catalogue Test Notes -
+- Need better recognition fo which Rect is which for matching
+- Need to remove image drag on Match tiles
+- In-UI Hotkey/Hotclick helpers
+- Previous page button doesn't work
+- Duplicated 'No Dataset loaded for this project' component in builder/preview
+- Need a delete single tile function
+- Need an 'indicate no link' function
+- Remove mismatch % still includes items that are No % - needs review
+- Doesn't appear that Brand is pre-filling into Brand facet
+- We can likely improve the PLU conversion link process by auto-excluding any item that is already linked in another offer
+- Consider possibility that the exclusion COULD auto select Article Type, instead of being JUST for refining a PLU link
+- Need a system that prompts to switch to PLU link mode once Exclusions begin to apply as Facet link will no longer be valid choice
+- Dual Brand Detection is not feeding into Article Type selection correctly - Example: wk30au-p25-box03-wide
+Calibre + SCA Glass Repellant
+Only detects ATs for Calibre, first brand
+- Need to be able to handle situations where only Article type is needed - example:
+wk30au-p29-box01-wide
+20% Off - LICENSED FLOOR MATS & MUDFLAPS Excludes clearance.
+To identify the brands included in this offer, a fast flow would be - see all under Article Type, Floor Mats/Mudflaps, refine from there. Cannot do this because Article Type is gated behind Brand facet
+- Auto article detect example: SCA Boot Mats - Brand is SCA, Article Type is Boot Mats. Good candidate for test
+- wk30au-p31-box01-big was pre-filled with a link, but the Image itself does not contain any PLUs. No change was made to this link before reaching it. Could this indicate a 'leak' of data between projects (as this offer has been linked in other Project tests)
+- As linking goes further down the list, it seems images pulled from the SCA website are taking longer to load. Unsure of cause - but we may want to consider 'pre-loading' in a way that balances overall performance, versus avoiding 'dead time' waiting to see the image for a comparison to tile image
+- Typing article types are retained after closure of the dropdown. This requires backspacing to then see the 'full list'. Small issue but tripped up on it a couple of times
+- Autofilling Catalog excludes change to Brand Path dropdown as one is gated behind the other; need to adjust so both are accessible (Clear option OR simply have the last-selected be the one used, auto-clearing the other selection (more ideal))
+- wk30au-p39-box01-wide
+25% off Big Brand Suspension Solutions
+Good example of offer that is in SPO inclusions but EXCLUDED from the Catalogue out now page; would be linked via Suspension subcat. Either need a way to handle via the Builder or this would be a Live Link candidate
+Everyday Price and NEW - Not in Adpack data
+This detects the PLU successfully, and displays the image successfully due to cross-site PLU link structure. It would be possible to pull Brand and rough Name from the URL as well; eg https://staging.supercheapauto.com.au/p/penrite-penrite-10-tenths-racing-15-engine-oil---15w-50-5-litre/723897.html - Brand comes first - then a Normalised version of the Name from the URL slug
+- Potential for Data Grab Bookmarklet to be used and brought back into the ap to 'supplement' data file

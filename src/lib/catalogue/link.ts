@@ -12,6 +12,18 @@ export function getBrandStub(pathname: string) {
   return match?.[1] ?? ""
 }
 
+export function getPreviewBasePathFromState(state: LinkBuilderState) {
+  const previewPathOverride = state.previewPathOverride ?? ""
+  let derivedPath = previewPathOverride
+  if (!derivedPath && state.brand) {
+    derivedPath = `/brands/${slugifyLabel(state.brand.label)}`
+  }
+  if (!derivedPath && state.category?.value === "catalogue-onsale") {
+    derivedPath = "/catalogue-out-now"
+  }
+  return derivedPath
+}
+
 export function buildDynamicOutputFromState(state: LinkBuilderState, derivedQuery = "") {
   const cleanedPLUs = state.plus.map((p) => p.trim()).filter((p) => p.length > 0)
 
@@ -59,17 +71,14 @@ export function buildPreviewUrlFromState(
   }
 
   if (isMultiPlu) {
-    return `${domain}/${buildIdFilter(cleanedPLUs)}`
+    const derivedPath = getPreviewBasePathFromState(state)
+    if (derivedPath) {
+      return `${domain}${derivedPath}${buildIdFilter(cleanedPLUs)}`
+    }
+    return `${domain}${buildIdFilter(cleanedPLUs)}`
   }
 
-  const previewPathOverride = state.previewPathOverride ?? ""
-  let derivedPath = previewPathOverride
-  if (!derivedPath && state.brand) {
-    derivedPath = `/brands/${slugifyLabel(state.brand.label)}`
-  }
-  if (!derivedPath && state.category?.value === "catalogue-onsale") {
-    derivedPath = "/catalogue-out-now"
-  }
+  const derivedPath = getPreviewBasePathFromState(state)
 
   if (derivedPath) {
     return `${domain}${derivedPath}${derivedQuery}`

@@ -6,6 +6,7 @@ import {
   buildDynamicOutputFromState,
   buildPreviewUrlFromState,
   createEmptyLinkBuilderState,
+  getPreviewBasePathFromState,
 } from "@/lib/catalogue/link"
 
 type UseTileBuilderParams = {
@@ -106,6 +107,21 @@ export default function useTileBuilder({
     if (draftActiveLinkMode === "facet") return candidateFacetUrl
     return candidatePluUrl
   }, [candidateFacetUrl, candidateLiveUrl, candidatePluUrl, draftActiveLinkMode])
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    if (draftActiveLinkMode !== "plu") return
+    if (pluCount <= 1) return
+    const basePath = getPreviewBasePathFromState(linkState)
+    if (!basePath) return
+    const expectedPrefix = `${projectRegion === "NZ" ? "https://staging.supercheapauto.co.nz" : "https://staging.supercheapauto.com.au"}${basePath}`
+    if (!candidatePluUrl.startsWith(expectedPrefix)) {
+      console.warn("[preview] multi-PLU preview missing base path", {
+        expectedPrefix,
+        previewUrl: candidatePluUrl,
+      })
+    }
+  }, [candidatePluUrl, draftActiveLinkMode, linkState, pluCount, projectRegion])
 
   function computeOutputForMode(
     state: LinkBuilderState,

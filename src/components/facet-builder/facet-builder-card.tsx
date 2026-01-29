@@ -485,6 +485,7 @@ export function FacetMatchesCard({
 
   const isPluMode = activeLinkMode === "plu"
   const isFacetMode = activeLinkMode === "facet"
+  const showConvertToPluPrompt = isFacetMode && excludedPluIds.length > 0
   const facetColumnCount = dataset?.columnMeta?.facetKeys.length ?? 0
   const {
     displayItems,
@@ -759,6 +760,7 @@ export function FacetMatchesCard({
                             type="button"
                             size="icon"
                             variant="outline"
+                            className={showConvertToPluPrompt ? "ring-2 ring-destructive/60 ring-offset-2 ring-offset-background animate-pulse" : undefined}
                             onClick={() => onConvertToPlu?.(filteredPluIds)}
                             disabled={filteredPluIds.length === 0}
                             aria-label="Convert to PLU Link"

@@ -66,15 +66,17 @@ export default function useTileMatches({
     if (!dataset) {
       return { rows: [] as CsvRow[], count: 0, pluIds: [] as string[] }
     }
-    if (selectedBrands.length === 0) {
+    if (selectedBrands.length === 0 && selectedArticleTypes.length === 0) {
       return { rows: [] as CsvRow[], count: 0, pluIds: [] as string[] }
     }
     const rows: CsvRow[] = []
     const pluIds: string[] = []
     dataset.rowsRef.current.forEach((row) => {
-      const brandValue = row.brand?.trim()
-      if (selectedBrands.length > 0 && !selectedBrands.includes(brandValue ?? "")) {
-        return
+      if (selectedBrands.length > 0) {
+        const brandValue = row.brand?.trim()
+        if (!selectedBrands.includes(brandValue ?? "")) {
+          return
+        }
       }
       if (selectedArticleTypes.length > 0) {
         const facetValue = getFacetValue(row, "adArticleType", scope)

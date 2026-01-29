@@ -470,7 +470,6 @@ export function FacetMatchesCard({
 
   const articleTypeOptions = useMemo(() => {
     if (!dataset) return []
-    if (selectedBrands.length === 0) return []
     const values = new Set<string>()
     dataset.rowsRef.current.forEach((row) => {
       const brandValue = row.brand?.trim()
@@ -687,9 +686,9 @@ export function FacetMatchesCard({
                 {isFacetMode ? (
                   <>
                     <div className="flex-1 min-w-0">
-                      <IconFieldGroup tooltip="Brand (Facet)" icon={<Tags className="h-4 w-4" />}>
+                      <IconFieldGroup tooltip="Brand (optional)" icon={<Tags className="h-4 w-4" />}>
                         <MultiSelect
-                          label="Brand (Facet)"
+                          label="Brand (optional)"
                           options={brandOptions}
                           selected={selectedBrands}
                           onChange={setSelectedBrands}
@@ -710,13 +709,11 @@ export function FacetMatchesCard({
                           options={articleTypeOptions}
                           selected={selectedArticleTypes}
                           onChange={setSelectedArticleTypes}
-                          disabled={!dataset || selectedBrands.length === 0}
+                          disabled={!dataset}
                           placeholder={
                             !dataset
                               ? "Load dataset first"
-                              : selectedBrands.length === 0
-                                ? "Select brand first"
-                                : "Select article types"
+                              : "Select article types"
                           }
                           searchPlaceholder="Search types"
                           triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
@@ -821,9 +818,9 @@ export function FacetMatchesCard({
                     <div className="flex-1 min-w-0">{manualBrandControl}</div>
                   ) : null}
                   <div className="flex-1 min-w-0">
-                    <IconFieldGroup tooltip="Brand (Facet)" icon={<Tags className="h-4 w-4" />}>
+                    <IconFieldGroup tooltip="Brand (optional)" icon={<Tags className="h-4 w-4" />}>
                       <MultiSelect
-                        label="Brand (Facet)"
+                        label="Brand (optional)"
                         options={brandOptions}
                         selected={selectedBrands}
                         onChange={setSelectedBrands}
@@ -844,13 +841,11 @@ export function FacetMatchesCard({
                         options={articleTypeOptions}
                         selected={selectedArticleTypes}
                         onChange={setSelectedArticleTypes}
-                        disabled={!dataset || selectedBrands.length === 0}
+                        disabled={!dataset}
                         placeholder={
                           !dataset
                             ? "Load dataset first"
-                            : selectedBrands.length === 0
-                              ? "Select brand first"
-                              : "Select article types"
+                            : "Select article types"
                         }
                         searchPlaceholder="Search types"
                         triggerClassName="h-10 text-sm rounded-l-none w-full min-w-0"
@@ -874,6 +869,7 @@ export function FacetMatchesCard({
           isFacetMode={isFacetMode}
           isPluMode={isPluMode}
           selectedBrandsCount={selectedBrands.length}
+          selectedArticleTypesCount={selectedArticleTypes.length}
           displayCount={displayCount}
           displayItems={displayItems}
           renderCard={renderCard}

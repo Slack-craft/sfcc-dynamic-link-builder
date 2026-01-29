@@ -11,6 +11,7 @@ type MatchesPreviewPanelProps = {
   isFacetMode: boolean
   isPluMode: boolean
   selectedBrandsCount: number
+  selectedArticleTypesCount: number
   displayCount: number
   displayItems: MatchItem[]
   renderCard: (item: MatchItem) => React.ReactNode
@@ -22,6 +23,7 @@ export default function MatchesPreviewPanel({
   isFacetMode,
   isPluMode,
   selectedBrandsCount,
+  selectedArticleTypesCount,
   displayCount,
   displayItems,
   renderCard,
@@ -42,9 +44,9 @@ export default function MatchesPreviewPanel({
         </div>
       ) : null}
       {datasetPresent ? (
-        isFacetMode && selectedBrandsCount === 0 ? (
+        isFacetMode && selectedBrandsCount === 0 && selectedArticleTypesCount === 0 ? (
           <p className="px-6 text-xs text-muted-foreground">
-            Select a brand to preview dataset matches.
+            Select an Article Type (or Brand) to preview dataset matches.
           </p>
         ) : displayCount === 0 ? (
           <p className="px-6 text-xs text-muted-foreground">

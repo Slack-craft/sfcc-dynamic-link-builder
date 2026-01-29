@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Trash2 } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,6 +12,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -38,6 +40,8 @@ type TileDetailsCardProps = {
   onReExtractOffer?: () => void
   canReExtractOffer?: boolean
   isReExtractingOffer?: boolean
+  onDeleteTile?: () => void
+  canDeleteTile?: boolean
 }
 
 export default function TileDetailsCard({
@@ -55,13 +59,47 @@ export default function TileDetailsCard({
   onReExtractOffer,
   canReExtractOffer = true,
   isReExtractingOffer = false,
+  onDeleteTile,
+  canDeleteTile = true,
 }: TileDetailsCardProps) {
   const [reExtractOpen, setReExtractOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   return (
     <Card>
       <CardHeader className="py-4">
-        <CardTitle className="text-sm">Tile Details</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm">Tile Details</CardTitle>
+          {onDeleteTile ? (
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+              <AlertDialogTrigger asChild>
+                <Button type="button" size="icon" variant="outline" disabled={!canDeleteTile} aria-label="Delete tile">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete this tile?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will permanently delete this tile and its extracted data.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      setDeleteOpen(false)
+                      onDeleteTile()
+                    }}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    Delete tile
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="space-y-2">

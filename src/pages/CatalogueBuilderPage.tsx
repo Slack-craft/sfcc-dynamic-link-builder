@@ -17,7 +17,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Eraser } from "lucide-react"
+import { Eraser, Save, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react"
+import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   AlertDialog,
@@ -50,8 +51,10 @@ import {
   getProjectDataset,
   getAsset,
   deleteProjectDataset,
+  deleteAsset,
   putTileDetail,
   getTileDetail,
+  deleteTileDetail,
   listTileDetailsByProject,
 } from "@/lib/assetStore"
 import PdfTileDetectionPage from "@/pages/PdfTileDetectionPage"
@@ -840,6 +843,55 @@ export default function CatalogueBuilderPage() {
     URL.revokeObjectURL(url)
   }
 
+  async function handleDeleteSelectedTile() {
+    if (!project || !selectedTile) return
+    const tiles = project.tiles ?? []
+    const currentIndex = tiles.findIndex((tile) => tile.id === selectedTile.id)
+    const nextId =
+      tiles[currentIndex + 1]?.id ??
+      tiles[currentIndex - 1]?.id ??
+      null
+    const imageKey = selectedTile.imageKey
+    const nextTiles = tiles.filter((tile) => tile.id !== selectedTile.id)
+    const nextMatches = { ...(project.tileMatches ?? {}) }
+    if (imageKey) {
+      Object.entries(nextMatches).forEach(([rectId, imageId]) => {
+        if (imageId === imageKey) {
+          delete nextMatches[rectId]
+        }
+      })
+    }
+    let nextImageAssetIds = project.imageAssetIds ?? []
+    if (imageKey) {
+      const stillUsed = nextTiles.some((tile) => tile.imageKey === imageKey)
+      if (!stillUsed) {
+        nextImageAssetIds = nextImageAssetIds.filter((id) => id !== imageKey)
+        revokeObjectUrl(imageKey)
+        await deleteAsset(imageKey)
+      }
+    }
+    await deleteTileDetail(project.id, selectedTile.id)
+    const updated: CatalogueProject = {
+      ...project,
+      tiles: nextTiles,
+      tileMatches: nextMatches,
+      imageAssetIds: nextImageAssetIds,
+      updatedAt: new Date().toISOString(),
+    }
+    upsertProject(updated)
+    setTileThumbUrls((prev) => {
+      if (!prev[selectedTile.id]) return prev
+      const next = { ...prev }
+      delete next[selectedTile.id]
+      return next
+    })
+    setSelectedColorUrl(null)
+    setSelectedTileId(nextId)
+    if (!nextId) {
+      setSelectedTileDetail(null)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
 
@@ -1169,7 +1221,13 @@ export default function CatalogueBuilderPage() {
     }
   }, [commitAndSaveSelectedTile, isSaving])
 
-  useGlobalShortcuts({ onSave: handleSave })
+  useGlobalShortcuts({
+    onSave: handleSave,
+    onSaveAndNext: () => {
+      commitAndSaveSelectedTile()
+      selectTileByOffset(1)
+    },
+  })
 
   useEffect(() => {
     const handler = () => {
@@ -1515,25 +1573,93 @@ export default function CatalogueBuilderPage() {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <CardTitle>{selectedTile.id}</CardTitle>
                         <div className="flex flex-wrap items-center gap-2">
-                          <Button type="button" onClick={handleSave} disabled={isSaving}>
-                            {isSaving ? "Saving..." : isDirty ? "Save (Ctrl+S)" : "Saved"}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={() => {
-                              commitAndSaveSelectedTile()
-                              selectTileByOffset(1)
-                            }}
-                          >
-                            Save & Next
-                          </Button>
-                          <Button type="button" variant="outline" onClick={() => selectTileByOffset(-1)}>
-                            Previous
-                          </Button>
-                          <Button type="button" variant="outline" onClick={() => selectTileByOffset(1)}>
-                            Next
-                          </Button>
+                          <div className="hidden">
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={handleSave}
+                                  disabled={isSaving}
+                                  aria-label="Save Changes"
+                                >
+                                  <Save className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <div className="flex items-center gap-2">
+                                  <span>Save Changes</span>
+                                  <KbdGroup>
+                                    <Kbd>Ctrl</Kbd>
+                                    <Kbd>S</Kbd>
+                                  </KbdGroup>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="default"
+                                  size="icon"
+                                  onClick={() => {
+                                    commitAndSaveSelectedTile()
+                                    selectTileByOffset(1)
+                                  }}
+                                  aria-label="Save & Next"
+                                >
+                                  <ArrowRight className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <div className="flex items-center gap-2">
+                                  <span>Save &amp; Next</span>
+                                  <KbdGroup>
+                                    <Kbd>Ctrl</Kbd>
+                                    <Kbd>Shift</Kbd>
+                                    <Kbd>S</Kbd>
+                                  </KbdGroup>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                          </div>
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => selectTileByOffset(-1)}
+                                  aria-label="Previous"
+                                >
+                                  <ChevronLeft className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Previous</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => selectTileByOffset(1)}
+                                  aria-label="Next"
+                                >
+                                  <ChevronRight className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Next</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         </div>
                       </div>
                     </CardHeader>
@@ -1587,6 +1713,8 @@ export default function CatalogueBuilderPage() {
                               imageUpdatedSinceExtraction={selectedTile.imageUpdatedSinceExtraction}
                               onReExtractOffer={reExtractOfferForSelected}
                               canReExtractOffer={selectedTile.pdfMappingStatus !== "missing"}
+                              onDeleteTile={handleDeleteSelectedTile}
+                              canDeleteTile={Boolean(selectedTile)}
                             />
                           </div>
                           <div className="space-y-2">

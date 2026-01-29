@@ -12,12 +12,14 @@ export function isTypingTarget(target: EventTarget | null) {
 
 type UseGlobalShortcutsParams = {
   onSave: () => void
+  onSaveAndNext?: () => void
   isEnabled?: boolean
   isTypingTargetFn?: (target: EventTarget | null) => boolean
 }
 
 export default function useGlobalShortcuts({
   onSave,
+  onSaveAndNext,
   isEnabled = true,
 }: UseGlobalShortcutsParams) {
   useEffect(() => {
@@ -25,6 +27,11 @@ export default function useGlobalShortcuts({
 
     function onKeyDown(event: KeyboardEvent) {
       const isCmdOrCtrl = event.metaKey || event.ctrlKey
+      if (isCmdOrCtrl && event.key.toLowerCase() === "s" && event.shiftKey) {
+        event.preventDefault()
+        onSaveAndNext?.()
+        return
+      }
       if (isCmdOrCtrl && event.key.toLowerCase() === "s") {
         event.preventDefault()
         onSave()

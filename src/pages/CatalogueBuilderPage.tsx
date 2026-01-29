@@ -17,7 +17,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Eraser, Save, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Eraser, ListTodo, Timer, Save, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
@@ -1573,60 +1573,73 @@ export default function CatalogueBuilderPage() {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <CardTitle>{selectedTile.id}</CardTitle>
                         <div className="flex flex-wrap items-center gap-2">
-                          <div className="hidden">
-                          <TooltipProvider delayDuration={200}>
+                          <div className="inline-flex rounded-md border border-input bg-background">
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
                                   type="button"
-                                  variant="outline"
+                                  variant={draftStatus === "todo" ? "default" : "outline"}
                                   size="icon"
-                                  onClick={handleSave}
-                                  disabled={isSaving}
-                                  aria-label="Save Changes"
+                                  className="h-10 w-10 rounded-l-md rounded-r-none border-0 border-r border-input data-[selected=true]:bg-foreground data-[selected=true]:text-background data-[selected=true]:hover:bg-foreground/90"
+                                  onClick={() => setDraftStatus("todo")}
+                                  aria-label="To Do"
+                                  data-selected={draftStatus === "todo"}
                                 >
-                                  <Save className="h-4 w-4" />
+                                  <ListTodo className="h-4 w-4" />
                                 </Button>
                               </TooltipTrigger>
                               <TooltipContent>
-                                <div className="flex items-center gap-2">
-                                  <span>Save Changes</span>
-                                  <KbdGroup>
-                                    <Kbd>Ctrl</Kbd>
-                                    <Kbd>S</Kbd>
-                                  </KbdGroup>
-                                </div>
+                                To Do
                               </TooltipContent>
                             </Tooltip>
-                          </TooltipProvider>
-                          <TooltipProvider delayDuration={200}>
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
                                   type="button"
-                                  variant="default"
+                                  variant={draftStatus === "in_progress" ? "default" : "outline"}
                                   size="icon"
-                                  onClick={() => {
-                                    commitAndSaveSelectedTile()
-                                    selectTileByOffset(1)
-                                  }}
-                                  aria-label="Save & Next"
+                                  className="h-10 w-10 rounded-none border-0 border-r border-input data-[selected=true]:bg-yellow-400 data-[selected=true]:text-black"
+                                  onClick={() => setDraftStatus("in_progress")}
+                                  aria-label="In Progress"
+                                  data-selected={draftStatus === "in_progress"}
                                 >
-                                  <ArrowRight className="h-4 w-4" />
+                                  <Timer className="h-4 w-4" />
                                 </Button>
                               </TooltipTrigger>
-                              <TooltipContent>
-                                <div className="flex items-center gap-2">
-                                  <span>Save &amp; Next</span>
-                                  <KbdGroup>
-                                    <Kbd>Ctrl</Kbd>
-                                    <Kbd>Shift</Kbd>
-                                    <Kbd>S</Kbd>
-                                  </KbdGroup>
-                                </div>
-                              </TooltipContent>
+                              <TooltipContent>In Progress</TooltipContent>
                             </Tooltip>
-                          </TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant={draftStatus === "needs_review" ? "default" : "outline"}
+                                  size="icon"
+                                  className="h-10 w-10 rounded-none border-0 border-r border-input data-[selected=true]:bg-red-500 data-[selected=true]:text-white"
+                                  onClick={() => setDraftStatus("needs_review")}
+                                  aria-label="Needs Review"
+                                  data-selected={draftStatus === "needs_review"}
+                                >
+                                  <AlertTriangle className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Needs Review</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant={draftStatus === "done" ? "default" : "outline"}
+                                  size="icon"
+                                  className="h-10 w-10 rounded-l-none rounded-r-md border-0 data-[selected=true]:bg-green-600 data-[selected=true]:text-white"
+                                  onClick={() => setDraftStatus("done")}
+                                  aria-label="Done"
+                                  data-selected={draftStatus === "done"}
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Done</TooltipContent>
+                            </Tooltip>
                           </div>
                           <TooltipProvider delayDuration={200}>
                             <Tooltip>
@@ -1635,6 +1648,7 @@ export default function CatalogueBuilderPage() {
                                   type="button"
                                   variant="outline"
                                   size="icon"
+                                  className="h-10 w-10"
                                   onClick={() => selectTileByOffset(-1)}
                                   aria-label="Previous"
                                 >
@@ -1651,6 +1665,7 @@ export default function CatalogueBuilderPage() {
                                   type="button"
                                   variant="outline"
                                   size="icon"
+                                  className="h-10 w-10"
                                   onClick={() => selectTileByOffset(1)}
                                   aria-label="Next"
                                 >

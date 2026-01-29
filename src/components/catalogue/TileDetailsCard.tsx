@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Trash2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ListTodo, Timer, Trash2 } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -119,19 +119,89 @@ export default function TileDetailsCard({
             </span>
           </div>
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="space-y-2">
+        <div className="grid gap-3">
+          <div className="space-y-2 hidden">
             <Label htmlFor="tile-status">Status</Label>
+            <div className="inline-flex rounded-md border border-input bg-background">
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={status === "todo" ? "default" : "outline"}
+                      size="icon"
+                      className="h-10 w-10 rounded-l-md rounded-r-none border-0"
+                      onClick={() => onChangeStatus("todo")}
+                      aria-label="To Do"
+                    >
+                      <ListTodo className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>To Do</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={status === "in_progress" ? "default" : "outline"}
+                      size="icon"
+                      className="h-10 w-10 rounded-none border-0"
+                      onClick={() => onChangeStatus("in_progress")}
+                      aria-label="In Progress"
+                    >
+                      <Timer className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>In Progress</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={status === "needs_review" ? "default" : "outline"}
+                      size="icon"
+                      className="h-10 w-10 rounded-none border-0"
+                      onClick={() => onChangeStatus("needs_review")}
+                      aria-label="Needs Review"
+                    >
+                      <AlertTriangle className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Needs Review</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={status === "done" ? "default" : "outline"}
+                      size="icon"
+                      className="h-10 w-10 rounded-l-none rounded-r-md border-0"
+                      onClick={() => onChangeStatus("done")}
+                      aria-label="Done"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Done</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             <select
               id="tile-status"
               value={status}
               onChange={(event) => onChangeStatus(event.target.value as TileStatus)}
-              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              className="hidden"
             >
               <option value="todo">To do</option>
               <option value="in_progress">In progress</option>
-              <option value="done">Done</option>
               <option value="needs_review">Needs review</option>
+              <option value="done">Done</option>
             </select>
           </div>
           <div className="space-y-2">

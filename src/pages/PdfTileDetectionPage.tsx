@@ -104,6 +104,7 @@ export default function PdfTileDetectionPage({
   const [pageRendered, setPageRendered] = useState(false)
   const [rendering, setRendering] = useState(false)
   const [hoverRectIndex, setHoverRectIndex] = useState<number | null>(null)
+  const [hoverTileRectIndex, setHoverTileRectIndex] = useState<number | null>(null)
   const [selectedRectIndex, setSelectedRectIndex] = useState<number | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [replacePdfOpen, setReplacePdfOpen] = useState(false)
@@ -126,6 +127,7 @@ export default function PdfTileDetectionPage({
   const persistTimerRef = useRef<number | null>(null)
   const hydrationDoneRef = useRef(false)
   const listItemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const tileItemRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
   const pdfDocMapRef = useRef<Map<string, PDFDocumentProxy>>(new Map())
   const isSyncingRef = useRef(false)
   const isAutoDetectingRef = useRef(false)
@@ -153,6 +155,16 @@ export default function PdfTileDetectionPage({
       }
       return next
     })
+    if (next === null) return
+    const rectId = boxes[next]?.rectId
+    if (!rectId) return
+    const imageId = tileMatches[rectId]
+    if (!imageId) return
+    const target = tileItemRefs.current.get(imageId)
+    if (!target) return
+    requestAnimationFrame(() => {
+      target.scrollIntoView({ block: "nearest", inline: "nearest" })
+    })
   }
 
   type RectConfig = { include: boolean; paddingOverride?: number; orderIndex?: number }
@@ -177,6 +189,13 @@ export default function PdfTileDetectionPage({
   const [selectedPdfId, setSelectedPdfId] = useState<string | null>(null)
 
   const tileMatches = currentProject?.tileMatches ?? {}
+  const imageNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    imageAssets.forEach((asset) => {
+      map.set(asset.assetId, asset.name)
+    })
+    return map
+  }, [imageAssets])
 
   function updateActiveProject(updater: (project: CatalogueProject) => CatalogueProject) {
     if (externalProject && onProjectChange) {
@@ -578,6 +597,29 @@ export default function PdfTileDetectionPage({
     ]
   }
 
+  function drawTag(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    label: string,
+    color: string
+  ) {
+    const text = label.length > 24 ? `${label.slice(0, 24)}…` : label
+    const paddingX = 6
+    const paddingY = 3
+    const metrics = ctx.measureText(text)
+    const width = metrics.width + paddingX * 2
+    const height = 16 + paddingY
+    ctx.save()
+    ctx.fillStyle = color
+    ctx.globalAlpha = 0.95
+    ctx.fillRect(x, y, width, height)
+    ctx.globalAlpha = 1
+    ctx.fillStyle = "#0f172a"
+    ctx.fillText(text, x + paddingX, y + 12)
+    ctx.restore()
+  }
+
   function drawOverlay(current: PdfBox[]) {
     const overlay = overlayCanvasRef.current
     if (!overlay) return
@@ -593,27 +635,33 @@ export default function PdfTileDetectionPage({
       if (!(rectConfigs[index]?.include ?? true)) return
       const padding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
       const padded = getPaddedRect(box, padding)
-      const isMatched = Boolean(tileMatches[box.rectId])
-      ctx.strokeStyle = baseStroke
+      const matchedImageId = tileMatches[box.rectId]
+      const isMatched = Boolean(matchedImageId)
+      ctx.strokeStyle = isMatched ? "#16a34a" : baseStroke
       ctx.lineWidth = baseLineWidth
+      ctx.setLineDash(isMatched ? [] : [6, 4])
       ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
+      ctx.setLineDash([])
       ctx.fillStyle = isMatched ? "#16a34a" : baseStroke
       ctx.fillText(`${index + 1}`, padded.x + 4, padded.y + 14)
+      if (matchedImageId) {
+        // keep matched styling only; no label text
+      }
     })
 
     const selected = selectedRectIndex !== null ? current[selectedRectIndex] : null
-    const hovered = hoverRectIndex !== null ? current[hoverRectIndex] : null
+    const hoverIndex = hoverRectIndex ?? hoverTileRectIndex
+    const hovered = hoverIndex !== null ? current[hoverIndex] : null
 
     if (hovered) {
-      if (rectConfigs[hoverRectIndex!]?.include ?? true) {
-        const padding = rectConfigs[hoverRectIndex!]?.paddingOverride ?? rectPaddingPx
+      if (rectConfigs[hoverIndex!]?.include ?? true) {
+        const padding = rectConfigs[hoverIndex!]?.paddingOverride ?? rectPaddingPx
         const padded = getPaddedRect(hovered, padding)
         ctx.save()
         ctx.strokeStyle = "#f59e0b"
         ctx.lineWidth = 3
-        ctx.fillStyle = "rgba(245, 158, 11, 0.15)"
-        ctx.fillRect(padded.x, padded.y, padded.width, padded.height)
         ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
+        drawTag(ctx, padded.x + 4, padded.y - 18, "Hover", "#f59e0b")
         ctx.restore()
       }
     }
@@ -628,6 +676,7 @@ export default function PdfTileDetectionPage({
         ctx.fillStyle = "rgba(34, 197, 94, 0.18)"
         ctx.fillRect(padded.x, padded.y, padded.width, padded.height)
         ctx.strokeRect(padded.x, padded.y, padded.width, padded.height)
+        drawTag(ctx, padded.x + 4, padded.y - 18, "Selected", "#22c55e")
         ctx.restore()
       }
     }
@@ -660,7 +709,16 @@ export default function PdfTileDetectionPage({
     if (!overlay) return
     const raf = requestAnimationFrame(() => drawOverlay(boxes))
     return () => cancelAnimationFrame(raf)
-  }, [boxes, hoverRectIndex, selectedRectIndex, rectPaddingPx, rectConfigs, tileMatches])
+  }, [
+    boxes,
+    hoverRectIndex,
+    hoverTileRectIndex,
+    selectedRectIndex,
+    rectPaddingPx,
+    rectConfigs,
+    tileMatches,
+    imageNameById,
+  ])
 
   function assignMatch(rectId: string, imageId: string) {
     if (!currentProject) return
@@ -886,6 +944,25 @@ export default function PdfTileDetectionPage({
 
     const handle = findHandleAtPoint(point)
     setOverlayCursor(handle?.cursor ?? "default")
+
+    let hitIndex: number | null = null
+    let hitArea = Number.POSITIVE_INFINITY
+    boxes.forEach((box, index) => {
+      if (!(rectConfigs[index]?.include ?? true)) return
+      const basePadding = rectConfigs[index]?.paddingOverride ?? rectPaddingPx
+      const hitPadding = Math.max(basePadding, 6)
+      const padded = getPaddedRect(box, hitPadding)
+      const inX = point.x >= padded.x && point.x <= padded.x + padded.width
+      const inY = point.y >= padded.y && point.y <= padded.y + padded.height
+      if (inX && inY) {
+        const area = padded.width * padded.height
+        if (area < hitArea) {
+          hitArea = area
+          hitIndex = index
+        }
+      }
+    })
+    setHoverRectIndex(hitIndex)
   }
 
   function handleOverlayMouseUp() {
@@ -924,6 +1001,11 @@ export default function PdfTileDetectionPage({
         ]
       })
     }
+  }
+
+  function handleOverlayMouseLeave() {
+    setHoverRectIndex(null)
+    handleOverlayMouseUp()
   }
 
   async function handleDetectTiles() {
@@ -1461,6 +1543,19 @@ export default function PdfTileDetectionPage({
     })
     return map
   }, [boxes, tileMatches])
+
+  const selectedImageId = useMemo(() => {
+    if (selectedRectIndex === null) return null
+    const rectId = boxes[selectedRectIndex]?.rectId
+    return rectId ? tileMatches[rectId] ?? null : null
+  }, [boxes, selectedRectIndex, tileMatches])
+
+  const hoverRectIndexEffective = hoverRectIndex ?? hoverTileRectIndex
+  const hoveredImageId = useMemo(() => {
+    if (hoverRectIndexEffective === null) return null
+    const rectId = boxes[hoverRectIndexEffective]?.rectId
+    return rectId ? tileMatches[rectId] ?? null : null
+  }, [boxes, hoverRectIndexEffective, tileMatches])
 
   const currentSpreadNumber = useMemo(() => {
     if (!selectedPdfEntry) return null
@@ -2012,7 +2107,7 @@ export default function PdfTileDetectionPage({
                       onMouseDown={handleOverlayMouseDown}
                       onMouseMove={handleOverlayMouseMove}
                       onMouseUp={handleOverlayMouseUp}
-                      onMouseLeave={handleOverlayMouseUp}
+                      onMouseLeave={handleOverlayMouseLeave}
                     />
                   </div>
                 </div>
@@ -2049,6 +2144,24 @@ export default function PdfTileDetectionPage({
                   <p className="text-xs text-muted-foreground">
                     Select a rectangle, then click a tile image to assign. Right-click a rect to clear.
                   </p>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded-full border-2 border-emerald-500" />
+                      Matched
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded-full border-2 border-dashed border-violet-500" />
+                      Unmatched
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded-full border-2 border-amber-500" />
+                      Hover
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded-full border-2 border-green-500" />
+                      Selected
+                    </span>
+                  </div>
                   <div className="text-[11px] text-muted-foreground">
                     Showing {filteredImages.length} of {sortedVisibleImages.length} (
                     {matchedCount} matched)
@@ -2065,13 +2178,22 @@ export default function PdfTileDetectionPage({
                           ? boxes.findIndex((box) => box.rectId === rectId)
                           : -1
                         const isMatched = rectId !== undefined
+                        const isSelected = selectedImageId === image.assetId
+                        const isHovered = hoveredImageId === image.assetId
                         return (
                           <button
                             key={image.assetId}
                             type="button"
                             className={`flex flex-col items-start gap-1 rounded-md border px-2 py-2 text-left text-xs transition-opacity ${
                               isMatched ? "border-emerald-500 bg-emerald-50" : "border-border hover:bg-muted"
-                            }`}
+                            } ${isSelected ? "ring-2 ring-emerald-500" : ""} ${isHovered ? "ring-2 ring-amber-400" : ""}`}
+                            ref={(el) => {
+                              if (el) {
+                                tileItemRefs.current.set(image.assetId, el)
+                              } else {
+                                tileItemRefs.current.delete(image.assetId)
+                              }
+                            }}
                             onClick={() => {
                               const matchedRectId = Object.entries(tileMatches).find(
                                 ([, imageId]) => imageId === image.assetId
@@ -2094,6 +2216,15 @@ export default function PdfTileDetectionPage({
                               }
                               assignMatch(selected.rectId, image.assetId)
                             }}
+                            onMouseEnter={() => {
+                              if (rectId) {
+                                const idx = boxes.findIndex((box) => box.rectId === rectId)
+                                if (idx >= 0) {
+                                  setHoverTileRectIndex(idx)
+                                }
+                              }
+                            }}
+                            onMouseLeave={() => setHoverTileRectIndex(null)}
                           >
                             <img
                               src={image.url}
@@ -2107,6 +2238,16 @@ export default function PdfTileDetectionPage({
                               </Badge>
                               {matchedIndex >= 0 ? (
                                 <Badge variant="secondary">Rect {matchedIndex + 1}</Badge>
+                              ) : null}
+                              {isMatched && rectId ? (
+                                <span className="text-[10px] text-muted-foreground">
+                                  Rect: {rectId.slice(0, 8)}
+                                </span>
+                              ) : null}
+                              {!isMatched ? (
+                                <span className="text-[10px] text-muted-foreground">
+                                  Missing mapping
+                                </span>
                               ) : null}
                             </div>
                           </button>
@@ -2151,6 +2292,11 @@ export default function PdfTileDetectionPage({
                               />
                               Include
                             </label>
+                            {tileMatches[boxes[box.index]?.rectId ?? ""] ? (
+                              <Badge variant="default">Matched</Badge>
+                            ) : (
+                              <Badge variant="outline">Unmatched</Badge>
+                            )}
                             <Button
                               type="button"
                               size="sm"
